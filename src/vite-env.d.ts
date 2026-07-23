@@ -121,6 +121,13 @@ export interface EasyShellApi {
     failed?: number
     errors?: string[]
   } | null>
+  getSettings: () => Promise<{
+    useSystemProxy: boolean
+    detectedProxy: string | null
+  }>
+  setSettings: (partial: { useSystemProxy?: boolean }) => Promise<{
+    useSystemProxy: boolean
+  }>
   openSession: (payload: {
     sessionId?: string
     config: ConnectionConfig & { cols?: number; rows?: number }

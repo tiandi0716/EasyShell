@@ -18,6 +18,11 @@ const {
   exportConnectionsToDir,
   importConnectionsFromDir,
 } = require('./easyshell-dir-io.cjs')
+const {
+  readSettings,
+  writeSettings,
+  detectSystemSocksProxy,
+} = require('./proxy.cjs')
 
 const isDev = process.env.EASY_SHELL_DEV === '1'
 const ssh = new SshManager()
@@ -157,6 +162,22 @@ app.on('before-quit', () => {
 })
 
 ipcMain.handle('connections:list', () => readConnections())
+
+ipcMain.handle('settings:get', async () => {
+  const settings = readSettings()
+  const proxy = await detectSystemSocksProxy()
+  return {
+    useSystemProxy: settings.useSystemProxy !== false,
+    detectedProxy: proxy ? `${proxy.host}:${proxy.port}` : null,
+  }
+})
+
+ipcMain.handle('settings:set', (_e, partial) => {
+  const next = writeSettings(partial || {})
+  return {
+    useSystemProxy: next.useSystemProxy !== false,
+  }
+})
 
 ipcMain.handle('connections:save', (_e, conn) => {
   const list = readConnections()

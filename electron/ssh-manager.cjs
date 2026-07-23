@@ -2,7 +2,9 @@ const { Client } = require('ssh2')
 const fs = require('fs')
 const path = require('path')
 const { EventEmitter } = require('events')
+const { SocksClient } = require('socks')
 const { modeToString, fileTypeLabel, parseMonitor, MONITOR_SCRIPT } = require('./monitor.cjs')
+const { resolveProxyForSsh } = require('./proxy.cjs')
 
 function friendlyError(err, config) {
   const raw = err && err.message ? err.message : String(err)
@@ -17,8 +19,11 @@ function friendlyError(err, config) {
   }
   if (/EHOSTDOWN|EHOSTUNREACH|ENETUNREACH/i.test(raw)) {
     return new Error(
-      `无法到达主机 ${host}（网络不通）。请确认 IP 是否正确、是否同一网段/已连 VPN，并在终端执行：ping ${config.host}`,
+      `无法到达主机 ${host}（网络不通）。请先开启 Clash/VPN，并确认 EasyShell 已开启「系统代理」；或在终端执行：ping ${config.host}`,
     )
+  }
+  if (/Socks|SOCKS|proxy/i.test(raw) && /ECONNREFUSED|timeout|not available/i.test(raw)) {
+    return new Error(`代理不可用：${raw}。请确认 Clash/VPN 已启动（常见端口 7890）`)
   }
   if (/ENOTFOUND|EAI_AGAIN/i.test(raw)) {
     return new Error(`无法解析主机：${config.host}`)
@@ -53,95 +58,151 @@ class Session extends EventEmitter {
     }
   }
 
-  connect() {
-    return new Promise((resolve, reject) => {
-      let settled = false
-      const done = (err) => {
-        if (settled) return
-        settled = true
-        if (err) reject(friendlyError(err, this.config))
-        else resolve()
+  async connect() {
+    const host = String(this.config.host || '').trim()
+    if (!host) throw friendlyError(new Error('主机地址不能为空'), this.config)
+    const port = Number(this.config.port) || 22
+
+    const auth = {
+      host,
+      port,
+      username: String(this.config.username || '').trim(),
+      readyTimeout: Number(this.config.readyTimeout) || 30000,
+      keepaliveInterval: 10000,
+      tryKeyboard: false,
+      // 强制 IPv4，避免部分 VPN 下 IPv6 优先导致失败
+      family: 4,
+    }
+
+    try {
+      if (this.config.authType === 'key' && this.config.privateKeyPath) {
+        auth.privateKey = fs.readFileSync(this.config.privateKeyPath)
+        if (this.config.passphrase) auth.passphrase = this.config.passphrase
+      } else {
+        auth.password = this.config.password || ''
       }
+    } catch (err) {
+      throw friendlyError(err, this.config)
+    }
 
-      const conn = new Client()
-      this.conn = conn
-
-      const host = String(this.config.host || '').trim()
-      if (!host) {
-        done(new Error('主机地址不能为空'))
-        return
-      }
-
-      const auth = {
-        host,
-        port: Number(this.config.port) || 22,
-        username: String(this.config.username || '').trim(),
-        readyTimeout: Number(this.config.readyTimeout) || 30000,
-        keepaliveInterval: 10000,
-        tryKeyboard: false,
-      }
-
+    // 自动识别系统/本地代理（Clash 等）；有则走代理，失败再回退直连
+    const proxy = await resolveProxyForSsh(this.config)
+    if (proxy) {
       try {
-        if (this.config.authType === 'key' && this.config.privateKeyPath) {
-          auth.privateKey = fs.readFileSync(this.config.privateKeyPath)
-          if (this.config.passphrase) auth.passphrase = this.config.passphrase
-        } else {
-          auth.password = this.config.password || ''
-        }
-      } catch (err) {
-        done(err)
-        return
+        const { socket } = await SocksClient.createConnection({
+          proxy: {
+            host: proxy.host,
+            port: proxy.port,
+            type: proxy.type === 4 ? 4 : 5,
+          },
+          command: 'connect',
+          destination: { host, port },
+          timeout: Number(this.config.readyTimeout) || 30000,
+        })
+        auth.sock = socket
+        this.proxyInfo = `${proxy.host}:${proxy.port}`
+      } catch {
+        // 代理建连失败时回退直连（与 FinalShell「能连就连」类似）
+        delete auth.sock
+        this.proxyInfo = null
       }
+    }
 
-      conn
-        .on('ready', () => {
-          this.ready = true
-          conn.shell(
-            {
-              term: 'xterm-256color',
-              cols: this.config.cols || 120,
-              rows: this.config.rows || 36,
-            },
-            (err, stream) => {
-              if (err) {
-                done(err)
-                return
-              }
-              this.stream = stream
-              stream.on('data', (data) => {
-                this.safeEmit('data', data.toString('utf8'))
-              })
-              stream.on('close', () => {
-                this.safeEmit('close')
-                this.dispose()
-              })
-              if (stream.stderr) {
-                stream.stderr.on('data', (data) => {
+    const openWithAuth = (connectAuth) =>
+      new Promise((resolve, reject) => {
+        let settled = false
+        const done = (err) => {
+          if (settled) return
+          settled = true
+          if (err) reject(err)
+          else resolve()
+        }
+
+        const conn = new Client()
+        this.conn = conn
+
+        conn
+          .on('ready', () => {
+            this.ready = true
+            conn.shell(
+              {
+                term: 'xterm-256color',
+                cols: this.config.cols || 120,
+                rows: this.config.rows || 36,
+              },
+              (err, stream) => {
+                if (err) {
+                  done(err)
+                  return
+                }
+                this.stream = stream
+                stream.on('data', (data) => {
                   this.safeEmit('data', data.toString('utf8'))
                 })
-              }
+                stream.on('close', () => {
+                  this.safeEmit('close')
+                  this.dispose()
+                })
+                if (stream.stderr) {
+                  stream.stderr.on('data', (data) => {
+                    this.safeEmit('data', data.toString('utf8'))
+                  })
+                }
 
-              conn.sftp((sftpErr, sftp) => {
-                if (!sftpErr) this.sftp = sftp
-                done()
-              })
-            },
-          )
-        })
-        .on('error', (err) => {
-          this.safeEmit('error', friendlyError(err, this.config))
-          done(err)
-        })
-        .on('close', () => {
-          this.ready = false
-          if (!settled) {
-            done(new Error('SSH 连接已关闭'))
+                conn.sftp((sftpErr, sftp) => {
+                  if (!sftpErr) this.sftp = sftp
+                  done()
+                })
+              },
+            )
+          })
+          .on('error', (err) => {
+            this.safeEmit('error', friendlyError(err, this.config))
+            done(err)
+          })
+          .on('close', () => {
+            this.ready = false
+            if (!settled) {
+              done(new Error('SSH 连接已关闭'))
+              return
+            }
+            this.safeEmit('close')
+          })
+          .connect(connectAuth)
+      })
+
+    try {
+      await openWithAuth(auth)
+      return
+    } catch (err) {
+      const raw = String(err && err.message ? err.message : err)
+      const unreachable = /EHOSTDOWN|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|ECONNREFUSED/i.test(raw)
+      // 直连失败且刚才没用上代理时，再自动探测一次代理重试
+      if (!auth.sock && unreachable) {
+        const again = await resolveProxyForSsh({ ...this.config, proxyMode: 'system' })
+        if (again) {
+          try {
+            const { socket } = await SocksClient.createConnection({
+              proxy: {
+                host: again.host,
+                port: again.port,
+                type: again.type === 4 ? 4 : 5,
+              },
+              command: 'connect',
+              destination: { host, port },
+              timeout: Number(this.config.readyTimeout) || 30000,
+            })
+            const retryAuth = { ...auth, sock: socket }
+            this.proxyInfo = `${again.host}:${again.port}`
+            await openWithAuth(retryAuth)
             return
+          } catch (retryErr) {
+            throw friendlyError(retryErr, this.config)
           }
-          this.safeEmit('close')
-        })
-        .connect(auth)
-    })
+        }
+      }
+      throw friendlyError(err, this.config)
+    }
   }
 
   write(data) {

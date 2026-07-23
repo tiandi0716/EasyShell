@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('easyshell', {
   exportBackup: () => ipcRenderer.invoke('connections:exportBackup'),
   importBackup: () => ipcRenderer.invoke('connections:importBackup'),
   convertFinalShell: () => ipcRenderer.invoke('connections:convertFinalShell'),
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),
 
   openSession: (payload) => ipcRenderer.invoke('ssh:open', payload),
   closeSession: (sessionId) => ipcRenderer.invoke('ssh:close', sessionId),

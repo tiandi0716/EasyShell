@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('easyshell', {
+  platform: process.platform,
   listConnections: () => ipcRenderer.invoke('connections:list'),
   saveConnection: (conn) => ipcRenderer.invoke('connections:save', conn),
   deleteConnection: (id) => ipcRenderer.invoke('connections:delete', id),
@@ -110,16 +111,6 @@ contextBridge.exposeInMainWorld('easyshell', {
   rename: (sessionId, fromPath, toPath) =>
     ipcRenderer.invoke('sftp:rename', { sessionId, fromPath, toPath }),
   pickDirectory: (title) => ipcRenderer.invoke('dialog:pickDirectory', title),
-  prepareDrag: (sessionId, remotePath, isDir, fileName, meta) =>
-    ipcRenderer.invoke('sftp:prepareDrag', {
-      sessionId,
-      remotePath,
-      isDir,
-      fileName,
-      mtime: meta?.mtime,
-      size: meta?.size,
-    }),
-  startDrag: (filePath) => ipcRenderer.sendSync('drag:start', filePath),
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)

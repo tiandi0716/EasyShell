@@ -45,14 +45,11 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
   const [ctx, setCtx] = useState<CtxState | null>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [dragOver, setDragOver] = useState(false)
-  const [dragReadyPath, setDragReadyPath] = useState<string | null>(null)
 
   const dragDepth = useRef(0)
   const jumpAppliedRef = useRef(0)
   const jumpPathRef = useRef(jumpPath)
   jumpPathRef.current = jumpPath
-  const dragCache = useRef<Map<string, string>>(new Map())
-  const prepPromises = useRef<Map<string, Promise<string>>>(new Map())
 
   const loadRoot = useCallback(async () => {
     try {
@@ -153,68 +150,6 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
 
   function remoteOf(item: FileItem) {
     return joinPath(cwd, item.name)
-  }
-
-  function prepareItem(item: FileItem) {
-    const remotePath = remoteOf(item)
-    const cached = dragCache.current.get(remotePath)
-    if (cached) {
-      setDragReadyPath(remotePath)
-      return Promise.resolve(cached)
-    }
-    let pending = prepPromises.current.get(remotePath)
-    if (!pending) {
-      setBusy(`正在准备拖出 ${item.name}…`)
-      pending = window.easyshell
-        .prepareDrag(sessionId, remotePath, item.isDir, item.name, {
-          mtime: item.mtime,
-          size: item.size,
-        })
-        .then((localPath) => {
-          dragCache.current.set(remotePath, localPath)
-          prepPromises.current.delete(remotePath)
-          setDragReadyPath(remotePath)
-          setBusy(`${item.name} 可拖到桌面/访达任意位置`)
-          window.setTimeout(() => {
-            setBusy((prev) => (prev.includes(item.name) ? '' : prev))
-          }, 2000)
-          return localPath
-        })
-        .catch((err) => {
-          prepPromises.current.delete(remotePath)
-          setError(err instanceof Error ? err.message : String(err))
-          setBusy('')
-          throw err
-        })
-      prepPromises.current.set(remotePath, pending)
-    }
-    return pending
-  }
-
-  function onRowMouseDown(item: FileItem) {
-    setSelected(item)
-    // 按下即预下载，提高一次拖到访达的成功率
-    void prepareItem(item).catch(() => {})
-  }
-
-  function onNativeDragStart(e: DragEvent, item: FileItem) {
-    setSelected(item)
-    const remotePath = remoteOf(item)
-    const cached = dragCache.current.get(remotePath)
-    e.dataTransfer.effectAllowed = 'copy'
-
-    if (cached) {
-      // 交给 macOS 原生拖放：可拖到桌面、访达、其它 App
-      e.preventDefault()
-      const ok = window.easyshell.startDrag(cached)
-      if (!ok) setError('拖出失败，请再试一次或点「下载」')
-      return
-    }
-
-    // 尚未就绪：取消本次系统拖拽，后台继续准备
-    e.preventDefault()
-    setBusy(`正在准备 ${item.name}，就绪后即可拖到访达`)
-    void prepareItem(item).catch(() => {})
   }
 
   async function handleUpload() {
@@ -464,7 +399,7 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
           className="btn btn-ghost btn-sm"
           onClick={() => void handleDownload()}
           disabled={!selected || !!busy}
-          title="文件：另存为；文件夹：选择保存目录。也可直接拖到访达"
+          title="文件：另存为；文件夹：选择保存目录"
         >
           下载
         </button>
@@ -530,25 +465,15 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
               <div className="empty">加载中…</div>
             ) : (
               files.map((item) => {
-                const remotePath = joinPath(cwd, item.name)
-                const ready = dragReadyPath === remotePath || dragCache.current.has(remotePath)
                 return (
                   <div
                     key={`${item.name}-${item.isDir}`}
                     role="button"
                     tabIndex={0}
-                    draggable
-                    className={`file-table-row ${selected?.name === item.name ? 'active' : ''} ${
-                      ready ? 'drag-ready' : ''
-                    }`}
+                    className={`file-table-row ${selected?.name === item.name ? 'active' : ''}`}
                     onClick={() => setSelected(item)}
                     onDoubleClick={() => void openItem(item)}
                     onContextMenu={(e) => openContext(e, item)}
-                    onMouseDown={(e) => {
-                      if (e.button !== 0) return
-                      onRowMouseDown(item)
-                    }}
-                    onDragStart={(e) => onNativeDragStart(e, item)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') void openItem(item)
                     }}

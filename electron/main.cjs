@@ -1,7 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu } = require('electron')
 const path = require('path')
 const fs = require('fs')
-const os = require('os')
 const { randomUUID } = require('crypto')
 const { SshManager } = require('./ssh-manager.cjs')
 const {
@@ -121,6 +120,7 @@ function setupAppMenu() {
 }
 
 function createWindow() {
+  const isMac = process.platform === 'darwin'
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 860,
@@ -128,8 +128,15 @@ function createWindow() {
     minHeight: 640,
     title: 'EasyShell',
     backgroundColor: '#eceff3',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 16, y: 16 },
+    // macOS：隐藏标题栏融入内容；Windows：原生标题栏，避免再留 Mac 交通灯空白
+    ...(isMac
+      ? {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 16, y: 16 },
+        }
+      : {
+          autoHideMenuBar: true,
+        }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -734,50 +741,4 @@ ipcMain.handle('dialog:pickDirectory', async (_e, title) => {
   })
   if (result.canceled || !result.filePaths[0]) return null
   return result.filePaths[0]
-})
-
-const dragFileCache = new Map()
-
-function getDragIcon() {
-  const iconPath = path.join(__dirname, 'drag-icon.png')
-  const icon = fs.existsSync(iconPath)
-    ? nativeImage.createFromPath(iconPath)
-    : nativeImage.createEmpty()
-  if (icon.isEmpty()) return nativeImage.createEmpty()
-  return icon.resize({ width: 32, height: 32 })
-}
-
-ipcMain.handle(
-  'sftp:prepareDrag',
-  async (_e, { sessionId, remotePath, isDir, fileName, mtime, size }) => {
-    const session = ssh.get(sessionId)
-    if (!session) throw new Error('会话不存在')
-    const cacheKey = [sessionId, remotePath, mtime || 0, size || 0, isDir ? 1 : 0].join('\0')
-    const cached = dragFileCache.get(cacheKey)
-    if (cached && fs.existsSync(cached)) return cached
-
-    const tempRoot = path.join(os.tmpdir(), 'easyshell-drag', randomUUID())
-    fs.mkdirSync(tempRoot, { recursive: true })
-    const localPath = path.join(tempRoot, fileName || path.basename(remotePath))
-    await session.downloadRecursive(remotePath, localPath, !!isDir)
-    dragFileCache.set(cacheKey, localPath)
-    return localPath
-  },
-)
-
-ipcMain.on('drag:start', (event, filePath) => {
-  if (!filePath || !fs.existsSync(filePath)) {
-    event.returnValue = false
-    return
-  }
-  try {
-    event.sender.startDrag({
-      file: filePath,
-      icon: getDragIcon(),
-    })
-    event.returnValue = true
-  } catch (err) {
-    console.error('startDrag failed', err)
-    event.returnValue = false
-  }
 })

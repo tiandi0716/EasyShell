@@ -100,6 +100,8 @@ export interface RdpMonitorData {
 }
 
 export interface EasyShellApi {
+  /** electron process.platform：darwin / win32 / linux */
+  platform: 'darwin' | 'win32' | 'linux' | string
   listConnections: () => Promise<ConnectionConfig[]>
   saveConnection: (conn: ConnectionConfig) => Promise<ConnectionConfig>
   deleteConnection: (id: string) => Promise<boolean>
@@ -283,14 +285,6 @@ export interface EasyShellApi {
   mkdir: (sessionId: string, remotePath: string) => Promise<boolean>
   rename: (sessionId: string, fromPath: string, toPath: string) => Promise<boolean>
   pickDirectory: (title?: string) => Promise<string | null>
-  prepareDrag: (
-    sessionId: string,
-    remotePath: string,
-    isDir: boolean,
-    fileName: string,
-    meta?: { mtime?: number; size?: number },
-  ) => Promise<string>
-  startDrag: (filePath: string) => boolean
   getPathForFile: (file: File) => string
   onSessionData: (
     cb: (payload: { sessionId: string; data: string; offset?: number }) => void,

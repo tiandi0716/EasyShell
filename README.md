@@ -46,6 +46,14 @@ npm run dist:win
 npm run dist:all
 ```
 
+打包脚本默认走 **npmmirror 国内镜像**（`.npmrc` + `scripts/run-builder.cjs`），避免从 GitHub 拉 Electron / winCodeSign 过慢。若要用官方源，可临时覆盖：
+
+```bash
+ELECTRON_MIRROR=https://github.com/electron/electron/releases/download/ \
+ELECTRON_BUILDER_BINARIES_MIRROR=https://github.com/electron-userland/electron-builder-binaries/releases/download/ \
+npm run dist:win
+```
+
 应用图标资源：
 
 | 文件 | 用途 |

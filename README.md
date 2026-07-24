@@ -1,6 +1,37 @@
 # EasyShell
 
-轻量 SSH / SFTP / Windows 远程桌面客户端（界面风格接近 FinalShell）：
+<p align="center">
+  <img src="docs/screenshots/icon.png" width="72" alt="EasyShell" />
+</p>
+
+<p align="center">
+  轻量 <b>SSH / SFTP / Windows 远程桌面</b> 客户端（界面风格接近 FinalShell）
+</p>
+
+<p align="center">
+  <a href="https://github.com/tiandi0716/easyshell/releases/latest"><img src="https://img.shields.io/github/v/release/tiandi0716/easyshell?label=release" alt="release" /></a>
+  <a href="https://github.com/tiandi0716/easyshell/releases"><img src="https://img.shields.io/github/downloads/tiandi0716/easyshell/total?label=downloads" alt="downloads" /></a>
+</p>
+
+## 界面预览
+
+SSH 终端 + SFTP 文件管理 + 左侧系统监控：
+
+![SSH 工作区](docs/screenshots/ssh-workspace.png)
+
+主界面（未连接）与主机目录管理：
+
+![主界面](docs/screenshots/home.png)
+
+Windows 远程桌面（应用内嵌）：
+
+![RDP 远程桌面](docs/screenshots/rdp-session.jpg)
+
+| SFTP 文件面板 | 系统监控 |
+| --- | --- |
+| ![SFTP](docs/screenshots/sftp-files.png) | ![Monitor](docs/screenshots/monitor.png) |
+
+## 功能特性
 
 - 主机连接管理（SSH 密码/私钥库、Windows RDP）
 - 多标签 SSH 终端（xterm.js）与内嵌 Windows 远程桌面
@@ -11,6 +42,29 @@
 - 本地加密保存连接配置（无激活、无账号绑定）
 
 渲染进程 API 类型定义见：`src/vite-env.d.ts`
+
+## 下载安装
+
+请到 [Releases](https://github.com/tiandi0716/easyshell/releases/latest) 下载对应平台安装包：
+
+| 平台 | 文件 |
+|------|------|
+| macOS Apple Silicon | `EasyShell-*-arm64.dmg` |
+| macOS Intel | `EasyShell-*.dmg` |
+| Windows 安装包 | `EasyShell Setup *.exe` |
+| Windows 绿色版 | `EasyShell *.exe` |
+
+### macOS
+
+1. 打开 dmg，把 **EasyShell** 拖到「应用程序」
+2. 首次打开若提示「无法验证开发者」：
+   - 系统设置 → 隐私与安全性 → 仍要打开  
+   - 或终端执行：`xattr -cr /Applications/EasyShell.app`
+
+### Windows
+
+1. 使用 `EasyShell Setup *.exe` 按向导安装  
+2. 或直接运行绿色版 `EasyShell *.exe`
 
 ## 开发启动
 
@@ -23,7 +77,7 @@ npm run dev
 开发态 Dock 可能仍显示 Electron 默认图标/名称，属正常现象；正式包使用 `build/icon.*`。  
 连接配置与正式包共用同一数据目录（见下方「连接配置位置」）。
 
-## 安装包（给别人用）
+## 自行打包
 
 先打包，产物在 `release/` 目录：
 
@@ -55,20 +109,6 @@ npm run dist:win
 | `build/icon.png` | 通用 / Windows |
 | `build/icon.icns` | macOS |
 | `public/icon.png` | 页面 favicon |
-
-### macOS 安装
-
-1. 打开 `release/` 里的 `EasyShell-1.0.0-arm64.dmg`（Apple Silicon）或 `EasyShell-1.0.0.dmg`（Intel）
-2. 把 **EasyShell** 拖到 **应用程序**
-3. 首次打开若提示「无法验证开发者」：
-   - 系统设置 → 隐私与安全性 → 仍要打开  
-   - 或终端执行：`xattr -cr /Applications/EasyShell.app`
-
-### Windows 安装
-
-1. 使用 `release/EasyShell Setup 1.0.0.exe`（NSIS 安装包）
-2. 按向导安装，可生成桌面快捷方式
-3. 若只要绿色版，用 `EasyShell 1.0.0.exe`（portable，免安装）
 
 > 说明：在 macOS 上可以打 Windows 包；在 Windows 上一般打不了 macOS 包。正式发版建议分别在对应系统上打包更稳妥。
 

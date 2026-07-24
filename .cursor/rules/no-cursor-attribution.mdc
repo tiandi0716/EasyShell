@@ -1,0 +1,14 @@
+---
+description: 提交与 PR 不要附带任何 Cursor 署名信息
+alwaysApply: true
+---
+
+# 禁止 Cursor 署名
+
+提交、PR、代码注释中都不要加入任何 Cursor 相关署名，包括但不限于：
+
+- `Co-authored-by: Cursor <cursoragent@cursor.com>`
+- `Made-with: Cursor`
+- 其它 Cursor / cursoragent 归属说明
+
+写 commit message 时只保留用户与仓库相关的说明正文。

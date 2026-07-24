@@ -19,17 +19,17 @@ SSH 终端 + SFTP 文件管理 + 左侧系统监控：
 
 ![SSH 工作区](docs/screenshots/ssh-workspace.png)
 
-主界面（未连接）与主机目录管理：
-
-![主界面](docs/screenshots/home.png)
-
 Windows 远程桌面（应用内嵌）：
 
 ![RDP 远程桌面](docs/screenshots/rdp-session.jpg)
 
-| SFTP 文件面板 | 系统监控 |
+| 连接管理 | SFTP 文件面板 |
 | --- | --- |
-| ![SFTP](docs/screenshots/sftp-files.png) | ![Monitor](docs/screenshots/monitor.png) |
+| ![连接管理](docs/screenshots/connections.png) | ![SFTP](docs/screenshots/sftp-files.png) |
+
+| SSH 系统监控 | RDP 会话信息 |
+| --- | --- |
+| ![系统监控](docs/screenshots/monitor.png) | ![RDP 会话](docs/screenshots/rdp-session-info.png) |
 
 ## 功能特性
 

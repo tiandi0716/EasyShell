@@ -1,10 +1,20 @@
-node_modules
-dist
+# dependencies / build
+node_modules/
+dist/
+out/
+release/
+
+# local / OS
 .DS_Store
 *.log
-out
-release
-SSH
-*.easyshell
 .env
 .env.*
+*.easyshell
+
+# sample / imported host configs (never ship)
+SSH/
+
+# manually downloaded packaging caches (use ~/Library/Caches instead)
+electron-v*.zip
+winCodeSign*.7z
+*.7z

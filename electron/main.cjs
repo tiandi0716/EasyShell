@@ -17,15 +17,29 @@ const { importFinalShellDir, defaultExportDir } = require('./import-finalshell.c
 const {
   exportConnectionsToDir,
   importConnectionsFromDir,
+  readExportedKeys,
 } = require('./easyshell-dir-io.cjs')
 const {
   readSettings,
   writeSettings,
   detectSystemSocksProxy,
 } = require('./proxy.cjs')
+const { openRdpConnection } = require('./rdp.cjs')
+const { RdpManager } = require('./rdp-manager.cjs')
+const {
+  listKeys,
+  importKeyFromFile,
+  renameKey,
+  deleteKey,
+  getKeyById,
+  toPublicView,
+  exportKeys,
+  importKeys,
+} = require('./key-store.cjs')
 
 const isDev = process.env.EASY_SHELL_DEV === '1'
 const ssh = new SshManager()
+const rdpSessions = new RdpManager()
 let mainWindow = null
 
 // SSH 超时等异常不应弹出 Electron 原生崩溃框
@@ -118,7 +132,19 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      spellcheck: false,
     },
+  })
+
+  // 禁止任意页面导航 / 新窗口，降低被注入后外联风险
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowed =
+      url.startsWith('file://') ||
+      (isDev && (url.startsWith('http://127.0.0.1:') || url.startsWith('http://localhost:')))
+    if (!allowed) event.preventDefault()
   })
 
   // 拦截 Cmd/Ctrl+R、F5（开发模式可用 Cmd+Shift+R 强制刷新）
@@ -177,6 +203,88 @@ ipcMain.handle('settings:set', (_e, partial) => {
   return {
     useSystemProxy: next.useSystemProxy !== false,
   }
+})
+
+/** 外开系统远程桌面客户端（备选） */
+ipcMain.handle('rdp:openExternal', async (_e, config) => {
+  try {
+    return await openRdpConnection(config || {})
+  } catch (err) {
+    throw new Error(err.message || String(err))
+  }
+})
+
+/** 内嵌 RDP 会话（标签页） */
+ipcMain.handle('rdp:open', async (_e, { sessionId, config }) => {
+  const id = sessionId || randomUUID()
+  try {
+    const { session } = rdpSessions.open(id, config || {})
+    session.on('ready', (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('rdp:ready', { sessionId: id, ...payload })
+      }
+    })
+    session.on('bitmaps', (tiles) => {
+      if (!mainWindow || mainWindow.isDestroyed() || !tiles?.length) return
+      // 用 postMessage + Transferable 避免整块像素再拷贝一份
+      const transfer = []
+      const packed = tiles.map((tile) => {
+        const data = tile.data
+        if (data instanceof ArrayBuffer) transfer.push(data)
+        return tile
+      })
+      try {
+        mainWindow.webContents.postMessage('rdp:bitmaps', { sessionId: id, tiles: packed }, transfer)
+      } catch {
+        mainWindow.webContents.send('rdp:bitmaps', { sessionId: id, tiles: packed })
+      }
+    })
+    session.on('error', (err) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('rdp:error', {
+          sessionId: id,
+          message: err.message || String(err),
+        })
+      }
+    })
+    session.on('close', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('rdp:closed', { sessionId: id })
+      }
+    })
+    return { sessionId: id, screen: session.screen }
+  } catch (err) {
+    rdpSessions.close(id)
+    throw new Error(err.message || String(err))
+  }
+})
+
+ipcMain.handle('rdp:close', (_e, sessionId) => rdpSessions.close(sessionId))
+
+ipcMain.handle('rdp:monitor', (_e, sessionId) => {
+  try {
+    return rdpSessions.getMonitor(sessionId)
+  } catch (err) {
+    throw new Error(err.message || String(err))
+  }
+})
+
+ipcMain.on('rdp:pointer', (_e, payload) => {
+  const session = rdpSessions.get(payload?.sessionId)
+  if (!session) return
+  session.sendPointer(payload.x, payload.y, payload.button, payload.isPressed)
+})
+
+ipcMain.on('rdp:wheel', (_e, payload) => {
+  const session = rdpSessions.get(payload?.sessionId)
+  if (!session) return
+  session.sendWheel(payload.x, payload.y, payload.step, payload.isNegative, payload.isHorizontal)
+})
+
+ipcMain.on('rdp:key', (_e, payload) => {
+  const session = rdpSessions.get(payload?.sessionId)
+  if (!session) return
+  session.sendKey(payload.scancode, payload.isPressed, payload.extended)
 })
 
 ipcMain.handle('connections:save', (_e, conn) => {
@@ -274,9 +382,15 @@ ipcMain.handle('connections:pickImportDir', async () => {
   return result.filePaths[0]
 })
 
-ipcMain.handle('connections:exportBackup', async () => {
+ipcMain.handle('connections:exportBackup', async (_e, options = {}) => {
+  const folderFilter = Array.isArray(options?.folders)
+    ? options.folders.map((f) => String(f || '').trim()).filter((f) => f && f !== '未分组')
+    : []
+
   const picked = await dialog.showOpenDialog(mainWindow, {
-    title: '选择导出目录（将按分组目录写出连接）',
+    title: folderFilter.length
+      ? `选择导出目录（将导出：${folderFilter.join('、')}）`
+      : '选择导出目录（将按分组目录写出全部连接）',
     message: '导出为与 FinalShell 相同的分目录结构',
     buttonLabel: '保存',
     properties: ['openDirectory', 'createDirectory'],
@@ -285,14 +399,30 @@ ipcMain.handle('connections:exportBackup', async () => {
   if (picked.canceled || !picked.filePaths[0]) return null
 
   const destDir = picked.filePaths[0]
-  const connections = readConnections()
-  const folders = readFolders()
-  const result = exportConnectionsToDir(destDir, connections, folders)
+  let connections = readConnections()
+  let folders = readFolders()
+  if (folderFilter.length) {
+    const set = new Set(folderFilter)
+    connections = connections.filter((c) => set.has(String(c.folder || '').trim()))
+    folders = folderFilter
+    if (!connections.length) {
+      throw new Error(`所选目录下没有可导出的连接：${folderFilter.join('、')}`)
+    }
+  }
+
+  const keyIds = new Set(
+    connections.map((c) => c.privateKeyId).filter((id) => typeof id === 'string' && id),
+  )
+  const privateKeys = folderFilter.length
+    ? exportKeys().filter((k) => keyIds.has(k.id))
+    : exportKeys()
+  const result = exportConnectionsToDir(destDir, connections, folders, privateKeys)
   return {
     path: result.dir,
     filePath: result.dir,
     connections: result.connections,
     folders: result.folders,
+    keys: result.keys || 0,
   }
 })
 
@@ -306,6 +436,7 @@ ipcMain.handle('connections:importBackup', async () => {
   if (picked.canceled || !picked.filePaths[0]) return null
 
   const dir = picked.filePaths[0]
+  const keysResult = importKeys(readExportedKeys(dir))
   const merged = importConnectionsFromDir(dir, readConnections())
   if (!merged.files) {
     throw new Error('该目录下未找到连接配置（*_connect_config.json）')
@@ -321,6 +452,8 @@ ipcMain.handle('connections:importBackup', async () => {
     folders: merged.folders.length,
     failed: merged.failed,
     errors: merged.errors,
+    keysImported: keysResult.imported || 0,
+    keysUpdated: keysResult.updated || 0,
   }
 })
 
@@ -364,7 +497,7 @@ ipcMain.handle('connections:convertFinalShell', async () => {
     throw new Error('保存目录不能与 FinalShell 源目录相同，请另选一个空目录')
   }
 
-  const written = exportConnectionsToDir(destDir, result.list, folders)
+  const written = exportConnectionsToDir(destDir, result.list, folders, [])
   const converted = written.connections
   return {
     sourceDir,
@@ -380,6 +513,29 @@ ipcMain.handle('connections:convertFinalShell', async () => {
     errors: result.errors,
   }
 })
+
+ipcMain.handle('keys:list', () => listKeys())
+
+ipcMain.handle('keys:get', (_e, id) => {
+  return toPublicView(getKeyById(id))
+})
+
+ipcMain.handle('keys:import', async () => {
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: '导入私钥文件',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Private Key', extensions: ['pem', 'key', 'rsa', 'ppk'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  })
+  if (picked.canceled || !picked.filePaths[0]) return null
+  return importKeyFromFile(picked.filePaths[0])
+})
+
+ipcMain.handle('keys:rename', (_e, { id, name }) => renameKey(id, name))
+
+ipcMain.handle('keys:delete', (_e, id) => deleteKey(id))
 
 ipcMain.handle('ssh:open', async (_e, { sessionId, config }) => {
   const id = sessionId || randomUUID()
@@ -423,6 +579,7 @@ ipcMain.handle('ssh:getOutput', (_e, sessionId) => {
 })
 
 ipcMain.handle('ssh:close', (_e, sessionId) => {
+  if (rdpSessions.close(sessionId)) return true
   ssh.close(sessionId)
   return true
 })

@@ -2,6 +2,7 @@ const fs = require('fs')
 const path = require('path')
 
 let userDataOverride = null
+const SECRET_KEYS = ['password', 'passphrase']
 
 function getUserDataDir() {
   if (userDataOverride) return userDataOverride
@@ -21,11 +22,68 @@ function getFoldersPath() {
   return path.join(getUserDataDir(), 'folders.json')
 }
 
+function canUseSafeStorage() {
+  try {
+    const { safeStorage } = require('electron')
+    return typeof safeStorage?.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable()
+  } catch {
+    return false
+  }
+}
+
+/** 落盘前：敏感字段用 OS 级 safeStorage 封装 */
+function sealConnection(conn) {
+  if (!conn || typeof conn !== 'object') return conn
+  if (!canUseSafeStorage()) return { ...conn }
+  const { safeStorage } = require('electron')
+  const next = { ...conn }
+  for (const key of SECRET_KEYS) {
+    const val = next[key]
+    if (!val || typeof val !== 'string') continue
+    // 已是封装结构则跳过
+    if (typeof val === 'object' && val && val.v === 1) continue
+    try {
+      next[key] = {
+        v: 1,
+        alg: 'safeStorage',
+        d: safeStorage.encryptString(String(val)).toString('base64'),
+      }
+    } catch {
+      // 封装失败则保持原值，避免写坏配置
+    }
+  }
+  return next
+}
+
+/** 读盘后：还原敏感字段为明文（仅内存使用） */
+function unsealConnection(conn) {
+  if (!conn || typeof conn !== 'object') return conn
+  const next = { ...conn }
+  for (const key of SECRET_KEYS) {
+    const val = next[key]
+    if (val && typeof val === 'object' && val.v === 1 && val.d) {
+      try {
+        if (canUseSafeStorage()) {
+          const { safeStorage } = require('electron')
+          next[key] = safeStorage.decryptString(Buffer.from(String(val.d), 'base64'))
+        } else {
+          next[key] = ''
+        }
+      } catch {
+        next[key] = ''
+      }
+    }
+  }
+  return next
+}
+
 function readConnections() {
   try {
     const file = getStorePath()
     if (!fs.existsSync(file)) return []
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
+    const list = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (!Array.isArray(list)) return []
+    return list.map(unsealConnection)
   } catch {
     return []
   }
@@ -34,7 +92,8 @@ function readConnections() {
 function writeConnections(list) {
   const file = getStorePath()
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify(list, null, 2), 'utf8')
+  const sealed = (Array.isArray(list) ? list : []).map(sealConnection)
+  fs.writeFileSync(file, JSON.stringify(sealed, null, 2), 'utf8')
 }
 
 function normalizeFolderName(name) {
@@ -49,7 +108,6 @@ function readFolders() {
       .map((c) => normalizeFolderName(c.folder))
       .filter(Boolean)
     const set = new Set([...(Array.isArray(fromFile) ? fromFile : []), ...fromConns])
-    // 不再强制保留「未分组」
     set.delete('未分组')
     set.delete('')
     return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'))
@@ -112,7 +170,6 @@ function deleteFolder(name, mode = 'delete', moveTo = '') {
       normalizeFolderName(c.folder) === folder ? { ...c, folder: target } : c,
     )
   } else {
-    // 删除目录时一并删除其中的连接
     conns = conns.filter((c) => normalizeFolderName(c.folder) !== folder)
   }
   writeConnections(conns)

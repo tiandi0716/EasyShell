@@ -1,4 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react'
+import ScrollSelect from './ScrollSelect'
 
 interface Props {
   title: string
@@ -61,13 +62,7 @@ export default function FolderPickDialog({
             <div className="field">
               <label>目录</label>
               {options.length ? (
-                <select value={folder} onChange={(e) => setFolder(e.target.value)}>
-                  {options.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                </select>
+                <ScrollSelect value={folder} options={options} onChange={setFolder} />
               ) : (
                 <div className="dialog-message">暂无可用目录，请先新建目录</div>
               )}

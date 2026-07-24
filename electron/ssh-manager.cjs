@@ -101,8 +101,15 @@ class Session extends EventEmitter {
     }
 
     try {
-      if (this.config.authType === 'key' && this.config.privateKeyPath) {
-        auth.privateKey = fs.readFileSync(this.config.privateKeyPath)
+      if (this.config.authType === 'key') {
+        if (this.config.privateKeyId) {
+          const { getKeyPem } = require('./key-store.cjs')
+          auth.privateKey = getKeyPem(this.config.privateKeyId)
+        } else if (this.config.privateKeyPath) {
+          auth.privateKey = fs.readFileSync(this.config.privateKeyPath)
+        } else {
+          throw new Error('未选择私钥，请在连接配置中浏览并选择私钥')
+        }
         if (this.config.passphrase) auth.passphrase = this.config.passphrase
       } else {
         auth.password = this.config.password || ''

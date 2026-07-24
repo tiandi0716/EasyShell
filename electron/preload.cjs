@@ -16,11 +16,70 @@ contextBridge.exposeInMainWorld('easyshell', {
   writeClipboard: (text) => ipcRenderer.invoke('clipboard:write', text),
   importFinalShell: (dir) => ipcRenderer.invoke('connections:importFinalShell', dir),
   pickImportDir: () => ipcRenderer.invoke('connections:pickImportDir'),
-  exportBackup: () => ipcRenderer.invoke('connections:exportBackup'),
+  exportBackup: (options) => ipcRenderer.invoke('connections:exportBackup', options || {}),
   importBackup: () => ipcRenderer.invoke('connections:importBackup'),
   convertFinalShell: () => ipcRenderer.invoke('connections:convertFinalShell'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),
+  openRdpExternal: (config) => ipcRenderer.invoke('rdp:openExternal', config),
+  openRdpSession: (payload) => ipcRenderer.invoke('rdp:open', payload),
+  closeRdpSession: (sessionId) => ipcRenderer.invoke('rdp:close', sessionId),
+  getRdpMonitor: (sessionId) => ipcRenderer.invoke('rdp:monitor', sessionId),
+  rdpPointer: (sessionId, x, y, button, isPressed) =>
+    ipcRenderer.send('rdp:pointer', { sessionId, x, y, button, isPressed }),
+  rdpWheel: (sessionId, x, y, step, isNegative, isHorizontal) =>
+    ipcRenderer.send('rdp:wheel', {
+      sessionId,
+      x,
+      y,
+      step,
+      isNegative,
+      isHorizontal,
+    }),
+  rdpKey: (sessionId, scancode, isPressed, extended) =>
+    ipcRenderer.send('rdp:key', { sessionId, scancode, isPressed, extended }),
+  onRdpBitmaps: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('rdp:bitmaps', listener)
+    return () => ipcRenderer.removeListener('rdp:bitmaps', listener)
+  },
+  /** @deprecated 兼容旧单帧接口 */
+  onRdpBitmap: (cb) => {
+    const listener = (_e, payload) => {
+      if (payload?.tiles) {
+        for (const tile of payload.tiles) cb({ sessionId: payload.sessionId, ...tile })
+        return
+      }
+      cb(payload)
+    }
+    ipcRenderer.on('rdp:bitmaps', listener)
+    ipcRenderer.on('rdp:bitmap', listener)
+    return () => {
+      ipcRenderer.removeListener('rdp:bitmaps', listener)
+      ipcRenderer.removeListener('rdp:bitmap', listener)
+    }
+  },
+  onRdpReady: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('rdp:ready', listener)
+    return () => ipcRenderer.removeListener('rdp:ready', listener)
+  },
+  onRdpClose: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('rdp:closed', listener)
+    return () => ipcRenderer.removeListener('rdp:closed', listener)
+  },
+  onRdpError: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('rdp:error', listener)
+    return () => ipcRenderer.removeListener('rdp:error', listener)
+  },
+
+  listKeys: () => ipcRenderer.invoke('keys:list'),
+  getKeyInfo: (id) => ipcRenderer.invoke('keys:get', id),
+  importKey: () => ipcRenderer.invoke('keys:import'),
+  renameKey: (id, name) => ipcRenderer.invoke('keys:rename', { id, name }),
+  deleteKey: (id) => ipcRenderer.invoke('keys:delete', id),
 
   openSession: (payload) => ipcRenderer.invoke('ssh:open', payload),
   closeSession: (sessionId) => ipcRenderer.invoke('ssh:close', sessionId),

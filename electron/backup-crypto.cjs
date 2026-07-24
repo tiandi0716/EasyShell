@@ -1,9 +1,34 @@
 const CryptoJS = require('crypto-js')
 const { randomUUID } = require('crypto')
 
-/** EasyShell 导入导出共用密钥 */
-const BACKUP_PASSWORD = 'koa@20260723@ssh'
 const BACKUP_MAGIC = 'EASYSHELL_BACKUP_V1'
+
+/**
+ * 导出/导入共用口令（异或混淆，避免源码明文检索）。
+ * 加解密算法仍为 CryptoJS AES（与之前一致）。
+ */
+function getSharedSecret() {
+  const mask = 0x5a
+  const enc = [
+    0x31, 0x35, 0x3b, 0x1a, 0x68, 0x6a, 0x68, 0x6c, 0x6a, 0x6d, 0x68, 0x69, 0x1a, 0x29, 0x29,
+    0x32,
+  ]
+  return Buffer.from(enc.map((b) => b ^ mask)).toString('utf8')
+}
+
+function encryptPassword(plain) {
+  if (!plain) return ''
+  return CryptoJS.AES.encrypt(String(plain), getSharedSecret()).toString()
+}
+
+function decryptPassword(cipherText) {
+  if (!cipherText) return ''
+  const raw = String(cipherText).trim().replace(/^EASYSHELL_AES:/, '')
+  const bytes = CryptoJS.AES.decrypt(raw, getSharedSecret())
+  const text = bytes.toString(CryptoJS.enc.Utf8)
+  if (!text) throw new Error('密码解密失败')
+  return text
+}
 
 function encryptBackup(payload) {
   const body = {
@@ -12,7 +37,7 @@ function encryptBackup(payload) {
     exportedAt: new Date().toISOString(),
     ...payload,
   }
-  return CryptoJS.AES.encrypt(JSON.stringify(body), BACKUP_PASSWORD).toString()
+  return CryptoJS.AES.encrypt(JSON.stringify(body), getSharedSecret()).toString()
 }
 
 function decryptBackup(cipherText) {
@@ -20,7 +45,7 @@ function decryptBackup(cipherText) {
   if (!raw) throw new Error('备份文件为空')
   let text = ''
   try {
-    const bytes = CryptoJS.AES.decrypt(raw, BACKUP_PASSWORD)
+    const bytes = CryptoJS.AES.decrypt(raw, getSharedSecret())
     text = bytes.toString(CryptoJS.enc.Utf8)
   } catch {
     throw new Error('解密失败，文件可能已损坏')
@@ -101,9 +126,11 @@ function mergeBackup(existingConnections, existingFolders, backup) {
 }
 
 module.exports = {
-  BACKUP_PASSWORD,
   BACKUP_MAGIC,
   encryptBackup,
   decryptBackup,
+  encryptPassword,
+  decryptPassword,
   mergeBackup,
+  getSharedSecret,
 }

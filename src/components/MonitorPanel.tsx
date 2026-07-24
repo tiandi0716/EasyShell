@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { MonitorData } from '../vite-env'
+import type { MonitorData, RdpMonitorData } from '../vite-env'
 import { formatBytes, formatRate, pct } from '../utils/format'
 
 interface Props {
+  /** SSH 会话 id；与 rdpSessionId 互斥 */
   sessionId: string | null
+  /** RDP 会话 id */
+  rdpSessionId?: string | null
+  /** 无可用会话时的说明 */
+  unavailableReason?: string | null
 }
 
 type ProcSortKey = 'rss' | 'cpu'
@@ -62,15 +67,92 @@ function sortMark(active: boolean, dir: ProcSortDir) {
   return dir === 'desc' ? ' ↓' : ' ↑'
 }
 
-export default function MonitorPanel({ sessionId }: Props) {
+function formatDuration(ms: number) {
+  const sec = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h}时${m}分${s}秒`
+  if (m > 0) return `${m}分${s}秒`
+  return `${s}秒`
+}
+
+function statusLabel(status: RdpMonitorData['status']) {
+  if (status === 'connected') return '已连接'
+  if (status === 'connecting') return '连接中'
+  return '已断开'
+}
+
+function RdpMonitorView({ data }: { data: RdpMonitorData }) {
+  return (
+    <div className="monitor">
+      <section className="monitor-block">
+        <h4>会话信息</h4>
+        <div className="info-line">状态：{statusLabel(data.status)}</div>
+        <div className="info-line">
+          主机：{data.host}:{data.port}
+        </div>
+        <div className="info-line">用户：{data.username || '-'}</div>
+        <div className="info-line">
+          分辨率：{data.screen.width} × {data.screen.height}
+        </div>
+        <div className="info-line">已连接：{formatDuration(data.connectedMs)}</div>
+      </section>
+
+      <section className="monitor-block">
+        <h4>画面传输</h4>
+        <div className="info-line">刷新约：{data.fps.toFixed(1)} FPS</div>
+        <div className="info-line">帧批次：{data.frameCount}</div>
+        <div className="info-line">图块数：{data.tileCount}</div>
+        <div className="info-line">已接收：{formatBytes(data.bytesIn)}</div>
+      </section>
+    </div>
+  )
+}
+
+export default function MonitorPanel({
+  sessionId,
+  rdpSessionId = null,
+  unavailableReason,
+}: Props) {
   const [data, setData] = useState<MonitorData | null>(null)
+  const [rdpData, setRdpData] = useState<RdpMonitorData | null>(null)
   const [error, setError] = useState('')
   const [sortKey, setSortKey] = useState<ProcSortKey>('cpu')
   const [sortDir, setSortDir] = useState<ProcSortDir>('desc')
 
   useEffect(() => {
+    if (!rdpSessionId) {
+      setRdpData(null)
+      return
+    }
+    let alive = true
+    const tick = async () => {
+      try {
+        const next = await window.easyshell.getRdpMonitor(rdpSessionId)
+        if (alive) {
+          setRdpData(next)
+          setError('')
+        }
+      } catch (err) {
+        if (alive) {
+          setRdpData(null)
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      }
+    }
+    void tick()
+    const timer = window.setInterval(() => void tick(), 1500)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [rdpSessionId])
+
+  useEffect(() => {
     if (!sessionId) {
       setData(null)
+      if (!rdpSessionId) setError('')
       return
     }
     let alive = true
@@ -82,7 +164,10 @@ export default function MonitorPanel({ sessionId }: Props) {
           setError('')
         }
       } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : String(err))
+        if (alive) {
+          setData(null)
+          setError(err instanceof Error ? err.message : String(err))
+        }
       }
     }
     void tick()
@@ -91,7 +176,7 @@ export default function MonitorPanel({ sessionId }: Props) {
       alive = false
       window.clearInterval(timer)
     }
-  }, [sessionId])
+  }, [sessionId, rdpSessionId])
 
   const processes = useMemo(() => {
     if (!data) return []
@@ -115,10 +200,21 @@ export default function MonitorPanel({ sessionId }: Props) {
     setSortDir('desc')
   }
 
+  if (rdpSessionId) {
+    if (!rdpData) {
+      return (
+        <div className="monitor-empty">
+          <p>{error || '正在采集远程桌面会话信息…'}</p>
+        </div>
+      )
+    }
+    return <RdpMonitorView data={rdpData} />
+  }
+
   if (!sessionId) {
     return (
       <div className="monitor-empty">
-        <p>连接主机后显示系统监控</p>
+        <p>{unavailableReason || '连接 SSH 主机后显示系统监控'}</p>
       </div>
     )
   }

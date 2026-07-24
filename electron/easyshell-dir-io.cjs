@@ -1,23 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
-const CryptoJS = require('crypto-js')
-const { BACKUP_PASSWORD } = require('./backup-crypto.cjs')
-
-function encryptPassword(plain) {
-  if (!plain) return ''
-  return CryptoJS.AES.encrypt(String(plain), BACKUP_PASSWORD).toString()
-}
-
-function decryptPassword(cipher) {
-  if (!cipher) return ''
-  // 兼容旧导出里可能带过的无用前缀（新导出不再写入）
-  const raw = String(cipher).trim().replace(/^EASYSHELL_AES:/, '')
-  const bytes = CryptoJS.AES.decrypt(raw, BACKUP_PASSWORD)
-  const text = bytes.toString(CryptoJS.enc.Utf8)
-  if (!text) throw new Error('密码解密失败')
-  return text
-}
+const { encryptPassword, decryptPassword } = require('./backup-crypto.cjs')
 
 function safeName(name) {
   return String(name || 'unnamed')
@@ -35,20 +19,24 @@ function shortId(seed) {
 function toFinalShellShape(conn) {
   const now = Date.now()
   const authType = conn.authType === 'key' ? 2 : 1
+  const isRdp = conn.connType === 'rdp'
   return {
     id: shortId(conn.sourceId || conn.id),
     parent_id: shortId(`folder-${conn.folder || 'root'}`),
     name: conn.name || conn.host,
     host: conn.host,
-    port: Number(conn.port) || 22,
-    user_name: conn.username || 'root',
+    port: Number(conn.port) || (isRdp ? 3389 : 22),
+    user_name: conn.username || (isRdp ? 'Administrator' : 'root'),
     password: encryptPassword(conn.password || ''),
     authentication_type: authType,
-    secret_key_id: '',
+    secret_key_id: conn.privateKeyId || '',
+    private_key_id: conn.privateKeyId || '',
     private_key_path: conn.privateKeyPath || '',
     passphrase: conn.passphrase ? encryptPassword(conn.passphrase) : '',
     proxy_id: '0',
-    conection_type: 100,
+    // 100=SSH，102=Windows RDP（EasyShell 扩展）
+    conection_type: isRdp ? 102 : 100,
+    conn_type: isRdp ? 'rdp' : 'ssh',
     description: conn.remark || '',
     terminal_encoding: 'UTF-8',
     create_time: now,
@@ -86,8 +74,10 @@ function uniqueFilePath(dir, baseName) {
   return path.join(dir, `${baseName}_${i}_connect_config.json`)
 }
 
-/** 按 FinalShell 目录结构导出；密码字段为 AES */
-function exportConnectionsToDir(rootDir, connections, folders = []) {
+const KEYS_FILE = 'easyshell_private_keys.json'
+
+/** 按 FinalShell 目录结构导出；密码字段为 AES；私钥写入根目录清单 */
+function exportConnectionsToDir(rootDir, connections, folders = [], privateKeys = []) {
   ensureDir(rootDir)
   const folderSet = new Set(
     [...folders, ...connections.map((c) => c.folder)].filter((f) => f && f !== '未分组'),
@@ -110,10 +100,29 @@ function exportConnectionsToDir(rootDir, connections, folders = []) {
     written += 1
   }
 
+  let keysWritten = 0
+  if (Array.isArray(privateKeys) && privateKeys.length) {
+    const keysPath = path.join(rootDir, KEYS_FILE)
+    fs.writeFileSync(keysPath, JSON.stringify(privateKeys, null, 2), 'utf8')
+    keysWritten = privateKeys.length
+  }
+
   return {
     dir: rootDir,
     connections: written,
     folders: folderSet.size,
+    keys: keysWritten,
+  }
+}
+
+function readExportedKeys(rootDir) {
+  const file = path.join(rootDir, KEYS_FILE)
+  if (!fs.existsSync(file)) return []
+  try {
+    const list = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
   }
 }
 
@@ -149,14 +158,20 @@ function fromFinalShellShape(raw, folder) {
     }
   }
 
+  const isRdp =
+    raw.conn_type === 'rdp' ||
+    Number(raw.conection_type) === 102 ||
+    Number(raw.connection_type) === 102
   return {
     id: randomUUID(),
+    connType: isRdp ? 'rdp' : 'ssh',
     name: raw.name || raw.host,
     host: String(raw.host || '').trim(),
-    port: Number(raw.port) || 22,
-    username: raw.user_name || raw.username || 'root',
+    port: Number(raw.port) || (isRdp ? 3389 : 22),
+    username: raw.user_name || raw.username || (isRdp ? 'Administrator' : 'root'),
     authType: Number(raw.authentication_type) === 2 ? 'key' : 'password',
     password,
+    privateKeyId: raw.private_key_id || raw.secret_key_id || '',
     privateKeyPath: raw.private_key_path || '',
     passphrase,
     remark: raw.description || '',
@@ -246,4 +261,6 @@ module.exports = {
   exportConnectionsToDir,
   importConnectionsFromDir,
   walkConnectConfigs,
+  readExportedKeys,
+  KEYS_FILE,
 }

@@ -1,11 +1,21 @@
 # EasyShell
 
-轻量 SSH / SFTP 远程管理工具，类似 FinalShell 的核心能力：
+轻量 SSH / SFTP / Windows 远程桌面管理工具，类似 FinalShell 的核心能力：
 
-- 主机连接管理（密码 / 私钥）
+- 主机连接管理（SSH 密码/私钥、Windows RDP）
 - 多标签 SSH 终端（xterm.js）
-- SFTP 文件浏览、上传、下载、新建目录、删除
-- 本地保存连接配置，无激活、无账号绑定
+- SFTP 文件浏览、上传、下载、拖拽
+- 系统代理自动识别（Clash 等），方便访问内网
+- 连接导入导出、FinalShell 配置转换
+- 本地加密保存连接配置（无激活、无账号绑定）
+
+## 接口文档
+
+渲染进程 API、IPC 对照、数据模型与安全说明见：
+
+**[docs/API.md](./docs/API.md)**
+
+TypeScript 类型定义：`src/vite-env.d.ts`
 
 ## 开发启动
 
@@ -39,6 +49,7 @@ npm run dist:all
 3. 首次打开若提示「无法验证开发者」：
    - 系统设置 → 隐私与安全性 → 仍要打开  
    - 或终端执行：`xattr -cr /Applications/EasyShell.app`
+4. Windows 远程桌面请安装 [Microsoft Remote Desktop](https://apps.apple.com/app/microsoft-remote-desktop/id1295203466)
 
 ### Windows 安装
 
@@ -57,19 +68,33 @@ npm start
 
 ## 使用说明
 
-1. 左侧「新建连接」，填写主机、端口、用户名和认证信息
-2. 点击「连接」打开终端标签
-3. 右侧文件面板可浏览远程目录，支持上传/下载
+1. 左侧「+SSH」或「+Win」新建连接
+2. 双击连接：SSH 打开终端标签；Windows 调用系统远程桌面
+3. SSH 连接后可在文件面板浏览/上传/下载
 
 连接配置位置：
 
 - macOS：`~/Library/Application Support/easyshell/connections.json`
 - Windows：`%APPDATA%/easyshell/connections.json`
 
+## 安全说明（摘要）
+
+| 项 | 做法 |
+|----|------|
+| 本地密码 | 使用系统 `safeStorage` 封装后写入磁盘，避免明文 |
+| 导入导出 | 密码字段仍用 CryptoJS AES（与之前相同） |
+| 密钥材料 | 源码中异或混淆存放，避免明文常量 |
+| 安装包 | 不打包示例主机配置目录 |
+| 页面 | 禁止任意外链导航 / 弹窗 |
+
+更完整的接口与安全边界见 [docs/API.md](./docs/API.md)。
+
+> 桌面软件无法做到“绝对防逆向”。本项目重点是：**磁盘不明文、导出难直接肉眼破解、减小误分发风险**。
+
 ## 技术栈
 
 - Electron
 - React + TypeScript + Vite
-- ssh2
+- ssh2 / socks
 - xterm.js
 - electron-builder（安装包）

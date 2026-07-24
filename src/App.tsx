@@ -6,6 +6,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
+import { flushSync } from 'react-dom'
 import CommandBar from './components/CommandBar'
 import ConfirmDialog from './components/ConfirmDialog'
 import ConnectionForm from './components/ConnectionForm'
@@ -17,6 +18,7 @@ import KoaIcon from './components/KoaIcon'
 import MonitorPanel from './components/MonitorPanel'
 import PromptDialog from './components/PromptDialog'
 import RecentConnections from './components/RecentConnections'
+import RdpView from './components/RdpView'
 import TerminalView from './components/TerminalView'
 import { extractPwdPath } from './utils/pwdSync'
 import {
@@ -35,8 +37,10 @@ interface SessionTab {
   id: string
   title: string
   connectionId?: string
+  kind?: 'ssh' | 'rdp'
   status: 'connecting' | 'ready' | 'closed' | 'error'
   error?: string
+  screen?: { width: number; height: number }
 }
 
 type DialogState =
@@ -67,6 +71,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
+  const [createConnType, setCreateConnType] = useState<'ssh' | 'rdp'>('ssh')
   const [filesRatio, setFilesRatio] = useState(0.42)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -95,9 +100,13 @@ export default function App() {
   )
 
   const readySessionIds = useMemo(
-    () => tabs.filter((t) => t.status === 'ready').map((t) => t.id),
+    () => tabs.filter((t) => t.status === 'ready' && t.kind !== 'rdp').map((t) => t.id),
     [tabs],
   )
+
+  /** 布局：RDP 标签占用全宽主区（连接中也要隐藏文件栏，便于按最终尺寸建会话） */
+  const isRdpLayout = activeTab?.kind === 'rdp'
+  const isActiveRdp = isRdpLayout && activeTab.status === 'ready'
 
   const loadConnections = useCallback(async () => {
     const list = await window.easyshell.listConnections()
@@ -140,6 +149,27 @@ export default function App() {
   useEffect(() => {
     if (activeTabId) sessionStorage.setItem('easyshell.activeTabId', activeTabId)
   }, [activeTabId])
+
+  useEffect(() => {
+    const offClose = window.easyshell.onRdpClose(({ sessionId }) => {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === sessionId ? { ...tab, status: 'closed', error: '远程桌面已断开' } : tab,
+        ),
+      )
+    })
+    const offError = window.easyshell.onRdpError(({ sessionId, message }) => {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === sessionId ? { ...tab, status: 'error', error: message } : tab,
+        ),
+      )
+    })
+    return () => {
+      offClose()
+      offError()
+    }
+  }, [])
 
   // 渲染进程再拦一层 Cmd/Ctrl+R，避免误刷新
   useEffect(() => {
@@ -200,13 +230,16 @@ export default function App() {
     await loadConnections()
   }
 
-  function openCreateSsh(folder?: string) {
+  function openCreateSsh(folder?: string, connType: 'ssh' | 'rdp' = 'ssh') {
     const fallback = folders.find((f) => f && f !== '未分组') || ''
+    const isRdp = connType === 'rdp'
+    setCreateConnType(connType)
     setEditing({
+      connType,
       name: '',
       host: '',
-      port: 22,
-      username: 'root',
+      port: isRdp ? 3389 : 22,
+      username: isRdp ? 'Administrator' : 'root',
       authType: 'password',
       password: '',
       folder: folder && folder !== '未分组' ? folder : fallback,
@@ -215,33 +248,87 @@ export default function App() {
   }
 
   async function connectTo(conn: ConnectionConfig, replaceTabId?: string) {
+    const isRdp = (conn.connType || 'ssh') === 'rdp'
     if (conn.id) setRecent(pushRecentConnection(conn))
     const tempId = replaceTabId || `pending-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
     const title = conn.name || `${conn.host}`
-    if (replaceTabId) {
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === replaceTabId
-            ? { ...tab, title, connectionId: conn.id, status: 'connecting', error: undefined }
-            : tab,
-        ),
-      )
-      setActiveTabId(replaceTabId)
-    } else {
-      setTabs((prev) => [
-        ...prev,
-        { id: tempId, title, connectionId: conn.id, status: 'connecting' },
-      ])
-      setActiveTabId(tempId)
+    const applyConnecting = () => {
+      if (replaceTabId) {
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === replaceTabId
+              ? {
+                  ...tab,
+                  title,
+                  connectionId: conn.id,
+                  kind: isRdp ? 'rdp' : 'ssh',
+                  status: 'connecting',
+                  error: undefined,
+                }
+              : tab,
+          ),
+        )
+        setActiveTabId(replaceTabId)
+      } else {
+        setTabs((prev) => [
+          ...prev,
+          {
+            id: tempId,
+            title,
+            connectionId: conn.id,
+            kind: isRdp ? 'rdp' : 'ssh',
+            status: 'connecting',
+          },
+        ])
+        setActiveTabId(tempId)
+      }
     }
+    // RDP 需立刻切到全宽测量舞台，再读尺寸；SSH 普通异步更新即可
+    if (isRdp) flushSync(applyConnecting)
+    else applyConnecting()
 
     try {
+      if (isRdp) {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        })
+        const stage =
+          (document.querySelector('.terminal-pane .rdp-stage') as HTMLElement | null) ||
+          (document.querySelector('.terminal-pane') as HTMLElement | null)
+        const pw = Math.max(640, Math.floor(stage?.clientWidth || window.innerWidth * 0.7))
+        const ph = Math.max(400, Math.floor(stage?.clientHeight || window.innerHeight * 0.75))
+        // 偶数尺寸，贴近舞台像素，几乎铺满
+        const width = Math.max(640, pw - (pw % 2))
+        const height = Math.max(400, ph - (ph % 2))
+        const { sessionId, screen } = await window.easyshell.openRdpSession({
+          config: { ...conn, width, height },
+        })
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === tempId
+              ? {
+                  ...tab,
+                  id: sessionId,
+                  kind: 'rdp',
+                  status: 'ready',
+                  error: undefined,
+                  screen,
+                }
+              : tab,
+          ),
+        )
+        setActiveTabId(sessionId)
+        return
+      }
+
       const { sessionId } = await window.easyshell.openSession({
         config: { ...conn, cols: 120, rows: 36 },
       })
       setTabs((prev) =>
         prev.map((tab) =>
-          tab.id === tempId ? { ...tab, id: sessionId, status: 'ready', error: undefined } : tab,
+          tab.id === tempId
+            ? { ...tab, id: sessionId, kind: 'ssh', status: 'ready', error: undefined }
+            : tab,
         ),
       )
       setActiveTabId(sessionId)
@@ -307,6 +394,12 @@ export default function App() {
   }
 
   async function handleCopySshCommand(conn: ConnectionConfig) {
+    if ((conn.connType || 'ssh') === 'rdp') {
+      const port = conn.port || 3389
+      const text = port === 3389 ? conn.host : `${conn.host}:${port}`
+      await window.easyshell.writeClipboard(text)
+      return
+    }
     const port = conn.port || 22
     const text =
       port === 22
@@ -315,14 +408,22 @@ export default function App() {
     await window.easyshell.writeClipboard(text)
   }
 
-  async function handleExportBackup() {
+  async function handleExportBackup(options?: { folders?: string[] }) {
     try {
-      const result = await window.easyshell.exportBackup()
+      const result = await window.easyshell.exportBackup(options)
       if (!result) return
+      const scope =
+        options?.folders?.length === 1
+          ? `目录「${options.folders[0]}」`
+          : options?.folders?.length
+            ? `${options.folders.length} 个选中目录`
+            : '全部'
       setDialog({
         type: 'alert',
         title: '导出成功',
-        message: `已按目录导出 ${result.connections} 个连接、${result.folders} 个分组\n${result.path || result.filePath}`,
+        message: `已导出${scope}：${result.connections} 个连接、${result.folders} 个分组${
+          result.keys ? `、${result.keys} 个私钥` : ''
+        }\n${result.path || result.filePath}`,
       })
     } catch (err) {
       setDialog({
@@ -341,10 +442,14 @@ export default function App() {
       const errHint = result.errors?.length
         ? `\n部分失败：${result.errors.slice(0, 3).join('；')}`
         : ''
+      const keyHint =
+        (result.keysImported || 0) + (result.keysUpdated || 0) > 0
+          ? `\n私钥：新增 ${result.keysImported || 0}，更新 ${result.keysUpdated || 0}`
+          : ''
       setDialog({
         type: 'alert',
         title: '导入成功',
-        message: `新增 ${result.imported}，更新 ${result.updated}，当前共 ${result.total} 个连接${errHint}`,
+        message: `新增 ${result.imported}，更新 ${result.updated}，当前共 ${result.total} 个连接${keyHint}${errHint}`,
       })
     } catch (err) {
       setDialog({
@@ -535,15 +640,16 @@ export default function App() {
                 setDialog({
                   type: 'alert',
                   title: '提示',
-                  message: `目录「${folder}」下没有 SSH 连接`,
+                  message: `目录「${folder}」下没有连接`,
                 })
                 return
               }
               setDialog({ type: 'connectFolder', folder, count })
             }}
-            onCreateSsh={(folder) => openCreateSsh(folder)}
+            onCreateSsh={(folder) => openCreateSsh(folder, 'ssh')}
             onCreateFolder={() => setDialog({ type: 'createFolder' })}
             onEdit={(c) => {
+              setCreateConnType((c.connType || 'ssh') as 'ssh' | 'rdp')
               setEditing(c)
               setShowForm(true)
             }}
@@ -555,7 +661,7 @@ export default function App() {
             onDelete={(c) => setDialog({ type: 'deleteConn', conn: c })}
             onRenameFolder={(folder) => setDialog({ type: 'renameFolder', folder })}
             onDeleteFolder={(folder) => setDialog({ type: 'deleteFolder', folder })}
-            onExportBackup={() => void handleExportBackup()}
+            onExport={(options) => void handleExportBackup(options)}
             onImportBackup={() => void handleImportBackup()}
             onConvertFinalShell={() => void handleConvertFinalShell()}
           />
@@ -563,7 +669,15 @@ export default function App() {
 
         <div className="monitor-wrap">
           <div className="monitor-title">系统监控</div>
-          <MonitorPanel sessionId={activeTab?.status === 'ready' ? activeTab.id : null} />
+          <MonitorPanel
+            sessionId={
+              activeTab?.status === 'ready' && activeTab.kind !== 'rdp' ? activeTab.id : null
+            }
+            rdpSessionId={isActiveRdp ? activeTab.id : null}
+            unavailableReason={
+              isRdpLayout && !isActiveRdp ? '正在建立 Windows 远程桌面…' : null
+            }
+          />
         </div>
         </aside>
       ) : null}
@@ -637,7 +751,7 @@ export default function App() {
         {activeTab?.error ? <div className="error-banner">{activeTab.error}</div> : null}
 
         <div className="split-workspace">
-          <div className="terminal-pane" style={{ flex: 1 - filesRatio }}>
+          <div className="terminal-pane" style={{ flex: isRdpLayout ? 1 : 1 - filesRatio }}>
             {!activeTab ? (
               <RecentConnections
                 recent={recent}
@@ -646,10 +760,20 @@ export default function App() {
                 onClear={() => setRecent([])}
               />
             ) : activeTab.status === 'connecting' ? (
-              <div className="empty">
-                <h2>连接中…</h2>
-                <p>正在建立 SSH 会话</p>
-              </div>
+              activeTab.kind === 'rdp' ? (
+                <div className="rdp-view rdp-view-measuring">
+                  <div className="rdp-stage" />
+                  <div className="rdp-connecting-overlay">
+                    <h2>连接中…</h2>
+                    <p>正在建立 Windows 远程桌面会话</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty">
+                  <h2>连接中…</h2>
+                  <p>正在建立 SSH 会话</p>
+                </div>
+              )
             ) : activeTab.status === 'error' ? (
               <div className="empty">
                 <h2>连接失败</h2>
@@ -665,43 +789,58 @@ export default function App() {
                         key={tab.id}
                         className={`terminal-slot ${tab.id === activeTabId ? 'active' : ''}`}
                       >
-                        <TerminalView
-                          sessionId={tab.id}
-                          active={tab.id === activeTabId}
-                          syncSessionIds={readySessionIds}
-                          onPwdCommand={markExpectPwd}
-                        />
+                        {tab.kind === 'rdp' ? (
+                          <RdpView
+                            sessionId={tab.id}
+                            active={tab.id === activeTabId}
+                            width={tab.screen?.width || 1280}
+                            height={tab.screen?.height || 720}
+                          />
+                        ) : (
+                          <TerminalView
+                            sessionId={tab.id}
+                            active={tab.id === activeTabId}
+                            syncSessionIds={readySessionIds}
+                            onPwdCommand={markExpectPwd}
+                          />
+                        )}
                       </div>
                     ))}
                 </div>
-                <CommandBar
-                  activeSessionId={
-                    activeTab?.status === 'ready' ? activeTab.id : readySessionIds[0] || null
-                  }
-                  readySessionIds={readySessionIds}
-                  disabled={!readySessionIds.length}
-                  onPwdCommand={(ids) => {
-                    for (const id of ids) markExpectPwd(id)
-                  }}
-                />
+                {!isActiveRdp ? (
+                  <CommandBar
+                    activeSessionId={
+                      activeTab?.status === 'ready' && activeTab.kind !== 'rdp'
+                        ? activeTab.id
+                        : readySessionIds[0] || null
+                    }
+                    readySessionIds={readySessionIds}
+                    disabled={!readySessionIds.length}
+                    onPwdCommand={(ids) => {
+                      for (const id of ids) markExpectPwd(id)
+                    }}
+                  />
+                ) : null}
               </>
             )}
           </div>
 
-          <div className="split-bar" onMouseDown={startResize} />
+          {!isRdpLayout ? <div className="split-bar" onMouseDown={startResize} /> : null}
 
-          <div className="files-slot" style={{ flex: filesRatio }}>
-            {activeTab?.status === 'ready' ? (
-              <FileBrowser
-                sessionId={activeTab.id}
-                jumpPath={cwdBySession[activeTab.id] || null}
-              />
-            ) : (
-              <div className="empty">
-                <p>连接后显示远程文件管理</p>
-              </div>
-            )}
-          </div>
+          {!isRdpLayout ? (
+            <div className="files-slot" style={{ flex: filesRatio }}>
+              {activeTab?.status === 'ready' && activeTab.kind !== 'rdp' ? (
+                <FileBrowser
+                  sessionId={activeTab.id}
+                  jumpPath={cwdBySession[activeTab.id] || null}
+                />
+              ) : (
+                <div className="empty">
+                  <p>连接后显示远程文件管理</p>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -709,9 +848,11 @@ export default function App() {
         <ConnectionForm
           initial={editing}
           folders={folders}
+          defaultConnType={createConnType}
           onClose={() => {
             setShowForm(false)
             setEditing(null)
+            setCreateConnType('ssh')
           }}
           onSave={handleSave}
         />

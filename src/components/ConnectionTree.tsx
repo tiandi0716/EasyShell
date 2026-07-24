@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { ConnectionConfig } from '../vite-env'
 import ContextMenu, { type MenuItem } from './ContextMenu'
+import FolderExportDialog from './FolderExportDialog'
+import KeyPickDialog from './KeyPickDialog'
 
 interface Props {
   connections: ConnectionConfig[]
@@ -19,7 +21,7 @@ interface Props {
   onDelete: (conn: ConnectionConfig) => void
   onRenameFolder: (folder: string) => void
   onDeleteFolder: (folder: string) => void
-  onExportBackup: () => void
+  onExport: (options?: { folders?: string[] }) => void
   onImportBackup: () => void
   onConvertFinalShell: () => void
 }
@@ -47,7 +49,7 @@ export default function ConnectionTree({
   onDelete,
   onRenameFolder,
   onDeleteFolder,
-  onExportBackup,
+  onExport,
   onImportBackup,
   onConvertFinalShell,
 }: Props) {
@@ -71,41 +73,58 @@ export default function ConnectionTree({
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [filter, setFilter] = useState('')
+  const [selectedFolder, setSelectedFolder] = useState('')
+  const [showExportPick, setShowExportPick] = useState(false)
+  const [showKeyManage, setShowKeyManage] = useState(false)
   const [menu, setMenu] = useState<MenuState>(null)
   const q = filter.trim().toLowerCase()
+
+  const folderCounts = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const [folder, list] of groups) map[folder] = list.length
+    return map
+  }, [groups])
 
   const menuItems: MenuItem[] = useMemo(() => {
     if (!menu) return []
     if (menu.type === 'tools') {
       return [
-        { key: 'export', label: '导出连接' },
+        { key: 'exportPartial', label: '导出部分', disabled: !groups.length },
+        { key: 'exportAll', label: '导出全部' },
         { key: 'import', label: '导入连接' },
         { key: 'sepTools', label: '', separator: true },
+        { key: 'keys', label: '私钥管理' },
+        { key: 'sepKeys', label: '', separator: true },
         { key: 'finalshell', label: 'FinalShell 转 EasyShell' },
       ]
     }
     if (menu.type === 'folder') {
       return [
-        { key: 'connectAll', label: '连接全部 SSH' },
-        { key: 'newSsh', label: '新建 SSH' },
+        { key: 'connectAll', label: '连接全部' },
+        { key: 'newConn', label: '新建连接' },
+        { key: 'exportFolder', label: '导出' },
         { key: 'sep1', label: '', separator: true },
         { key: 'rename', label: '重命名目录' },
         { key: 'delete', label: '删除目录', danger: true },
       ]
     }
+    const isRdp = (menu.conn.connType || 'ssh') === 'rdp'
     return [
       { key: 'connect', label: '连接' },
       { key: 'edit', label: '编辑' },
       { key: 'rename', label: '重命名' },
       { key: 'sep1', label: '', separator: true },
       { key: 'copyAddr', label: '复制地址' },
-      { key: 'copyCmd', label: '复制 SSH 命令' },
+      {
+        key: 'copyCmd',
+        label: isRdp ? '复制 RDP 地址' : '复制 SSH 命令',
+      },
       { key: 'duplicate', label: '克隆' },
       { key: 'move', label: '移动到目录…' },
       { key: 'sep2', label: '', separator: true },
       { key: 'delete', label: '删除', danger: true },
     ]
-  }, [menu])
+  }, [menu, groups.length])
 
   function expandAll(open: boolean) {
     const next: Record<string, boolean> = {}
@@ -124,10 +143,10 @@ export default function ConnectionTree({
     <div className="conn-tree">
       <div className="conn-toolbar">
         <button className="btn btn-ghost btn-sm" title="新建目录" onClick={onCreateFolder}>
-          +目录
+          新建目录
         </button>
-        <button className="btn btn-primary btn-sm" title="新建 SSH" onClick={() => onCreateSsh()}>
-          +SSH
+        <button className="btn btn-primary btn-sm" title="新建连接" onClick={() => onCreateSsh()}>
+          新建连接
         </button>
         <button className="btn btn-ghost btn-sm" title="全部展开/折叠" onClick={toggleExpandAll}>
           {allExpanded ? '折叠' : '展开'}
@@ -161,7 +180,7 @@ export default function ConnectionTree({
       <div className="conn-tree-body">
         {groups.length === 0 ? (
           <div className="monitor-empty">
-            <p>暂无连接，先新建目录或 SSH</p>
+            <p>暂无连接，先新建目录 / 新建连接</p>
           </div>
         ) : (
           groups.map(([folder, list]) => {
@@ -177,19 +196,22 @@ export default function ConnectionTree({
             if (q && !visible.length && !folder.toLowerCase().includes(q)) return null
 
             const open = q ? true : !!expanded[folder]
+            const folderSelected = selectedFolder === folder
             return (
               <div className="folder-block" key={folder}>
                 <button
-                  className="folder-head"
-                  onClick={() =>
+                  className={`folder-head ${folderSelected ? 'selected' : ''}`}
+                  onClick={() => {
+                    setSelectedFolder(folder)
                     setExpanded((prev) => ({ ...prev, [folder]: !prev[folder] }))
-                  }
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
+                    setSelectedFolder(folder)
                     setMenu({ type: 'folder', folder, x: e.clientX, y: e.clientY })
                   }}
-                  title="单击展开/折叠；右键可连接全部或新建 SSH"
+                  title="单击选中并展开/折叠；右键可连接全部、新建连接或导出"
                 >
                   <span className="folder-arrow">{open ? '▼' : '▶'}</span>
                   <span className="folder-icon" />
@@ -199,29 +221,38 @@ export default function ConnectionTree({
                 {open ? (
                   <div className="folder-children">
                     {visible.length === 0 ? (
-                      <div className="conn-empty">目录为空，右键可新建 SSH</div>
+                      <div className="conn-empty">目录为空，右键可新建连接</div>
                     ) : (
-                      visible.map((conn) => (
-                        <div
-                          key={conn.id}
-                          className={`conn-row ${activeConnectionId === conn.id ? 'active' : ''}`}
-                          onDoubleClick={() => onConnect(conn)}
-                          onContextMenu={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            setMenu({ type: 'conn', conn, x: e.clientX, y: e.clientY })
-                          }}
-                          title={`${conn.username}@${conn.host}:${conn.port || 22}`}
-                        >
-                          <span className="conn-term-icon" />
-                          <div className="conn-row-main">
-                            <strong>{conn.name || conn.host}</strong>
-                            <small>
-                              {conn.host}:{conn.port || 22} · {conn.username}
-                            </small>
+                      visible.map((conn) => {
+                        const isRdp = (conn.connType || 'ssh') === 'rdp'
+                        const port = conn.port || (isRdp ? 3389 : 22)
+                        return (
+                          <div
+                            key={conn.id}
+                            className={`conn-row ${activeConnectionId === conn.id ? 'active' : ''}`}
+                            onClick={() => setSelectedFolder(folder)}
+                            onDoubleClick={() => onConnect(conn)}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setSelectedFolder(folder)
+                              setMenu({ type: 'conn', conn, x: e.clientX, y: e.clientY })
+                            }}
+                            title={`${isRdp ? 'RDP' : 'SSH'} ${conn.username}@${conn.host}:${port}`}
+                          >
+                            <span className={isRdp ? 'conn-win-icon' : 'conn-term-icon'} />
+                            <div className="conn-row-main">
+                              <strong>
+                                {conn.name || conn.host}
+                                {isRdp ? <em className="conn-type-tag">Win</em> : null}
+                              </strong>
+                              <small>
+                                {conn.host}:{port} · {conn.username}
+                              </small>
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        )
+                      })
                     )}
                   </div>
                 ) : null}
@@ -239,14 +270,17 @@ export default function ConnectionTree({
           onClose={() => setMenu(null)}
           onSelect={(key) => {
             if (menu.type === 'tools') {
-              if (key === 'export') onExportBackup()
+              if (key === 'exportPartial') setShowExportPick(true)
+              if (key === 'exportAll') onExport()
               if (key === 'import') onImportBackup()
+              if (key === 'keys') setShowKeyManage(true)
               if (key === 'finalshell') onConvertFinalShell()
               return
             }
             if (menu.type === 'folder') {
               if (key === 'connectAll') onConnectFolder(menu.folder)
-              if (key === 'newSsh') onCreateSsh(menu.folder)
+              if (key === 'newConn') onCreateSsh(menu.folder)
+              if (key === 'exportFolder') onExport({ folders: [menu.folder] })
               if (key === 'rename') onRenameFolder(menu.folder)
               if (key === 'delete') onDeleteFolder(menu.folder)
               return
@@ -262,6 +296,23 @@ export default function ConnectionTree({
             if (key === 'delete') onDelete(conn)
           }}
         />
+      ) : null}
+
+      {showExportPick ? (
+        <FolderExportDialog
+          folders={groups.map(([folder]) => folder)}
+          counts={folderCounts}
+          initialSelected={selectedFolder ? [selectedFolder] : []}
+          onClose={() => setShowExportPick(false)}
+          onConfirm={(picked) => {
+            setShowExportPick(false)
+            onExport({ folders: picked })
+          }}
+        />
+      ) : null}
+
+      {showKeyManage ? (
+        <KeyPickDialog mode="manage" onClose={() => setShowKeyManage(false)} />
       ) : null}
     </div>
   )

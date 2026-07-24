@@ -11,6 +11,9 @@ release/
 .env.*
 *.easyshell
 
+# editor / local agent rules
+.cursor/
+
 # sample / imported host configs (never ship)
 SSH/
 

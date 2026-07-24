@@ -24,22 +24,22 @@ export default function ScrollSelect({
   useLayoutEffect(() => {
     if (!open || !rootRef.current) return
     const rect = rootRef.current.getBoundingClientRect()
-    const maxHeight = 220
+    const maxHeight = 260
     const spaceBelow = window.innerHeight - rect.bottom - 12
     const spaceAbove = rect.top - 12
-    const openUp = spaceBelow < 160 && spaceAbove > spaceBelow
-    const height = Math.min(maxHeight, Math.max(120, openUp ? spaceAbove : spaceBelow))
+    const openUp = spaceBelow < 180 && spaceAbove > spaceBelow
+    const height = Math.min(maxHeight, Math.max(140, openUp ? spaceAbove : spaceBelow))
     setMenuStyle({
       position: 'fixed',
       left: rect.left,
-      width: rect.width,
-      zIndex: 200,
+      width: Math.max(rect.width, 200),
+      zIndex: 240,
       maxHeight: height,
       ...(openUp
-        ? { bottom: window.innerHeight - rect.top + 4 }
-        : { top: rect.bottom + 4 }),
+        ? { bottom: window.innerHeight - rect.top + 6 }
+        : { top: rect.bottom + 6 }),
     })
-  }, [open])
+  }, [open, options.length])
 
   useEffect(() => {
     if (!open) return
@@ -51,7 +51,13 @@ export default function ScrollSelect({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
-    const onReposition = () => setOpen(false)
+    // 只在窗口/外层滚动时收起；菜单内部滚动不能关
+    const onReposition = (e: Event) => {
+      const t = e.target as Node | null
+      if (t && listRef.current?.contains(t)) return
+      if (t === listRef.current) return
+      setOpen(false)
+    }
     window.addEventListener('mousedown', onPointer, true)
     window.addEventListener('keydown', onKey)
     window.addEventListener('resize', onReposition)
@@ -70,6 +76,19 @@ export default function ScrollSelect({
     active?.scrollIntoView({ block: 'nearest' })
   }, [open, value])
 
+  // 滚轮落到菜单上时，阻止传到背后弹窗，避免“滚不动”
+  useEffect(() => {
+    if (!open) return
+    const el = listRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      // 避免滚轮事件冒泡到弹窗/页面，导致列表滚不动
+      e.stopPropagation()
+    }
+    el.addEventListener('wheel', onWheel, { passive: true })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [open])
+
   const label = value || placeholder
 
   return (
@@ -82,9 +101,19 @@ export default function ScrollSelect({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className={value ? '' : 'scroll-select-placeholder'}>{label}</span>
+        <span className={`scroll-select-label ${value ? '' : 'scroll-select-placeholder'}`}>
+          {label}
+        </span>
         <span className="scroll-select-caret" aria-hidden>
-          ▾
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path
+              d="M2.5 4.25L6 7.75L9.5 4.25"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </span>
       </button>
       {open
@@ -94,6 +123,7 @@ export default function ScrollSelect({
               role="listbox"
               ref={listRef}
               style={menuStyle}
+              onMouseDown={(e) => e.stopPropagation()}
             >
               {options.map((opt) => {
                 const active = opt === value
@@ -112,12 +142,8 @@ export default function ScrollSelect({
                         setOpen(false)
                       }}
                     >
-                      {active ? (
-                        <span className="scroll-select-check">✓</span>
-                      ) : (
-                        <span className="scroll-select-check" />
-                      )}
-                      <span>{opt}</span>
+                      <span className="scroll-select-option-text">{opt}</span>
+                      {active ? <span className="scroll-select-check" aria-hidden>✓</span> : null}
                     </button>
                   </li>
                 )

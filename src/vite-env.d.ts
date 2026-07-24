@@ -143,6 +143,9 @@ export interface EasyShellApi {
       status: 'ready'
     }>
   >
+  getSessionOutput: (
+    sessionId: string,
+  ) => Promise<{ data: string; length: number; base?: number }>
   writeSession: (sessionId: string, data: string) => void
   resizeSession: (sessionId: string, cols: number, rows: number) => void
   getMonitor: (sessionId: string) => Promise<MonitorData>
@@ -174,7 +177,9 @@ export interface EasyShellApi {
   ) => Promise<string>
   startDrag: (filePath: string) => boolean
   getPathForFile: (file: File) => string
-  onSessionData: (cb: (payload: { sessionId: string; data: string }) => void) => () => void
+  onSessionData: (
+    cb: (payload: { sessionId: string; data: string; offset?: number }) => void,
+  ) => () => void
   onSessionClose: (cb: (payload: { sessionId: string }) => void) => () => void
   onSessionError: (
     cb: (payload: { sessionId: string; message: string }) => void,

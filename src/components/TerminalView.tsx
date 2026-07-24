@@ -80,8 +80,30 @@ export default function TerminalView({
       }
     }
 
-    const disposeData = window.easyshell.onSessionData(({ sessionId: id, data }) => {
-      if (id === sessionId) term.write(data)
+    // 按 offset 去重，避免「缓冲回放 + 实时推送」重复写入
+    let nextOffset = 0
+    let disposed = false
+
+    function applyOutput(data: string, offset?: number) {
+      if (!data) return
+      if (typeof offset === 'number') {
+        const end = offset + data.length
+        if (end <= nextOffset) return
+        const chunk = offset < nextOffset ? data.slice(nextOffset - offset) : data
+        if (chunk) term.write(chunk)
+        nextOffset = end
+        return
+      }
+      term.write(data)
+    }
+
+    const disposeData = window.easyshell.onSessionData(({ sessionId: id, data, offset }) => {
+      if (id === sessionId) applyOutput(data, offset)
+    })
+
+    void window.easyshell.getSessionOutput(sessionId).then((buf) => {
+      if (disposed || !buf?.data) return
+      applyOutput(buf.data, buf.base ?? 0)
     })
 
     const onData = term.onData((data) => {
@@ -103,6 +125,7 @@ export default function TerminalView({
     pushResize(term.cols, term.rows)
 
     return () => {
+      disposed = true
       disposeData()
       onData.dispose()
       resizeObserver.disconnect()

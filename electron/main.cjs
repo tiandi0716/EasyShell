@@ -384,10 +384,14 @@ ipcMain.handle('connections:convertFinalShell', async () => {
 ipcMain.handle('ssh:open', async (_e, { sessionId, config }) => {
   const id = sessionId || randomUUID()
   try {
-    const session = await ssh.open(id, config)
-    session.on('data', (data) => {
+    // 先挂监听再 connect，避免握手阶段的提示符被 safeEmit 丢掉
+    const session = ssh.create(id, config)
+    session.on('data', (payload) => {
+      const data = typeof payload === 'string' ? payload : payload?.data
+      const offset = typeof payload === 'object' && payload ? payload.offset : undefined
+      if (data == null) return
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('ssh:data', { sessionId: id, data })
+        mainWindow.webContents.send('ssh:data', { sessionId: id, data, offset })
       }
     })
     session.on('close', () => {
@@ -404,11 +408,18 @@ ipcMain.handle('ssh:open', async (_e, { sessionId, config }) => {
         })
       }
     })
+    await session.connect()
     return { sessionId: id }
   } catch (err) {
     ssh.close(id)
     throw new Error(err.message || String(err))
   }
+})
+
+ipcMain.handle('ssh:getOutput', (_e, sessionId) => {
+  const session = ssh.get(sessionId)
+  if (!session) return { data: '', length: 0 }
+  return session.getOutputBuffer()
 })
 
 ipcMain.handle('ssh:close', (_e, sessionId) => {

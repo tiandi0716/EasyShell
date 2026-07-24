@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('easyshell', {
   openSession: (payload) => ipcRenderer.invoke('ssh:open', payload),
   closeSession: (sessionId) => ipcRenderer.invoke('ssh:close', sessionId),
   listOpenSessions: () => ipcRenderer.invoke('ssh:listOpen'),
+  getSessionOutput: (sessionId) => ipcRenderer.invoke('ssh:getOutput', sessionId),
   writeSession: (sessionId, data) => ipcRenderer.send('ssh:write', { sessionId, data }),
   resizeSession: (sessionId, cols, rows) =>
     ipcRenderer.send('ssh:resize', { sessionId, cols, rows }),

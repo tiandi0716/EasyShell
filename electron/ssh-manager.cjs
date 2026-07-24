@@ -49,12 +49,38 @@ class Session extends EventEmitter {
     this.monitorPrev = null
     this.uidMap = new Map()
     this.gidMap = new Map()
+    // 终端输出缓冲：避免复制标签/新建连接时，提示符在前端挂载前被丢掉
+    this.outputBuffer = ''
+    this.outputBase = 0
+    this.maxOutputBuffer = 256 * 1024
   }
 
   // 避免尚未挂 listener 时 emit('error') 变成主进程 Uncaught Exception
   safeEmit(event, payload) {
     if (this.listenerCount(event) > 0) {
       this.emit(event, payload)
+    }
+  }
+
+  pushOutput(chunk) {
+    const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+    if (!text) return
+    const offset = this.outputBase + this.outputBuffer.length
+    this.outputBuffer += text
+    if (this.outputBuffer.length > this.maxOutputBuffer) {
+      const drop = this.outputBuffer.length - this.maxOutputBuffer
+      this.outputBuffer = this.outputBuffer.slice(drop)
+      this.outputBase += drop
+    }
+    // 缓冲始终保留；有监听时再推送（带绝对 offset，便于前端去重）
+    this.safeEmit('data', { data: text, offset })
+  }
+
+  getOutputBuffer() {
+    return {
+      data: this.outputBuffer,
+      length: this.outputBase + this.outputBuffer.length,
+      base: this.outputBase,
     }
   }
 
@@ -137,7 +163,7 @@ class Session extends EventEmitter {
                 }
                 this.stream = stream
                 stream.on('data', (data) => {
-                  this.safeEmit('data', data.toString('utf8'))
+                  this.pushOutput(data)
                 })
                 stream.on('close', () => {
                   this.safeEmit('close')
@@ -145,7 +171,7 @@ class Session extends EventEmitter {
                 })
                 if (stream.stderr) {
                   stream.stderr.on('data', (data) => {
-                    this.safeEmit('data', data.toString('utf8'))
+                    this.pushOutput(data)
                   })
                 }
 
@@ -425,10 +451,15 @@ class SshManager {
     this.sessions = new Map()
   }
 
-  async open(id, config) {
+  create(id, config) {
     this.close(id)
     const session = new Session(id, config)
     this.sessions.set(id, session)
+    return session
+  }
+
+  async open(id, config) {
+    const session = this.create(id, config)
     try {
       await session.connect()
       return session

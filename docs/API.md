@@ -215,8 +215,8 @@ off()
 
 | 前端方法 | IPC Channel | 说明 |
 |----------|-------------|------|
-| `getSettings()` | `settings:get` | `{ useSystemProxy, detectedProxy }` |
-| `setSettings(partial)` | `settings:set` | 更新设置 |
+| `getSettings()` | `settings:get` | `{ useSystemProxy, uiFontSize, detectedProxy }` |
+| `setSettings(partial)` | `settings:set` | 更新设置（含 `uiFontSize` 10–24，落盘 `settings.json`） |
 | `writeClipboard(text)` | `clipboard:write` | 写系统剪贴板 |
 | `pickDirectory(title?)` | `dialog:pickDirectory` | 选本地目录 |
 | `getPathForFile(file)` | —（preload 本地） | 从 File 对象取路径 |

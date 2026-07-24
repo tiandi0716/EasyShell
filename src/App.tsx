@@ -19,8 +19,10 @@ import MonitorPanel from './components/MonitorPanel'
 import PromptDialog from './components/PromptDialog'
 import RecentConnections from './components/RecentConnections'
 import RdpView from './components/RdpView'
+import SettingsDialog from './components/SettingsDialog'
 import TerminalView from './components/TerminalView'
 import { extractPwdPath } from './utils/pwdSync'
+import { applyUiFontSize } from './utils/uiFontSize'
 import {
   pushRecentConnection,
   readRecentEntries,
@@ -70,6 +72,7 @@ export default function App() {
   const [tabs, setTabs] = useState<SessionTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
   const [createConnType, setCreateConnType] = useState<'ssh' | 'rdp'>('ssh')
   const [filesRatio, setFilesRatio] = useState(0.42)
@@ -118,6 +121,22 @@ export default function App() {
   useEffect(() => {
     void loadConnections()
   }, [loadConnections])
+
+  // 启动时恢复已保存的界面字体大小
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const s = await window.easyshell.getSettings()
+        if (alive) applyUiFontSize(s.uiFontSize)
+      } catch {
+        // ignore
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // 页面刷新后，从主进程恢复仍存活的 SSH 会话标签
   useEffect(() => {
@@ -600,7 +619,30 @@ export default function App() {
         <aside className="sidebar" style={{ width: sidebarWidth }}>
           <div className="brand">
             <div className="brand-text">
-              <h1>EasyShell</h1>
+              <div className="brand-title-row">
+                <h1>EasyShell</h1>
+                <button
+                  type="button"
+                  className="brand-settings-btn"
+                  title="设置"
+                  aria-label="设置"
+                  onClick={() => setShowSettings(true)}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                    />
+                    <path
+                      d="M19.4 13a7.8 7.8 0 0 0 .05-2l2.05-1.6-2-3.46-2.45.9a7.7 7.7 0 0 0-1.73-1L14.9 3h-5.8l-.42 2.84a7.7 7.7 0 0 0-1.73 1l-2.45-.9-2 3.46L4.55 11a7.8 7.8 0 0 0 0 2l-2.05 1.6 2 3.46 2.45-.9c.53.42 1.11.76 1.73 1L9.1 21h5.8l.42-2.84c.62-.24 1.2-.58 1.73-1l2.45.9 2-3.46L19.4 13Z"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
               <KoaIcon size={34} />
             </div>
             <div className="brand-actions">
@@ -857,6 +899,8 @@ export default function App() {
           onSave={handleSave}
         />
       ) : null}
+
+      {showSettings ? <SettingsDialog onClose={() => setShowSettings(false)} /> : null}
 
       {dialog?.type === 'createFolder' ? (
         <PromptDialog

@@ -155,10 +155,15 @@ export interface EasyShellApi {
   } | null>
   getSettings: () => Promise<{
     useSystemProxy: boolean
+    uiFontSize: number
     detectedProxy: string | null
   }>
-  setSettings: (partial: { useSystemProxy?: boolean }) => Promise<{
+  setSettings: (partial: {
+    useSystemProxy?: boolean
+    uiFontSize?: number
+  }) => Promise<{
     useSystemProxy: boolean
+    uiFontSize: number
   }>
   openRdpExternal: (config: ConnectionConfig) => Promise<{
     path: string

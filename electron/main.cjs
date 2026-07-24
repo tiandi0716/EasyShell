@@ -192,19 +192,29 @@ app.on('before-quit', () => {
 
 ipcMain.handle('connections:list', () => readConnections())
 
+function normalizeUiFontSize(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 14
+  return Math.min(24, Math.max(10, Math.round(n)))
+}
+
 ipcMain.handle('settings:get', async () => {
   const settings = readSettings()
   const proxy = await detectSystemSocksProxy()
   return {
     useSystemProxy: settings.useSystemProxy !== false,
+    uiFontSize: normalizeUiFontSize(settings.uiFontSize),
     detectedProxy: proxy ? `${proxy.host}:${proxy.port}` : null,
   }
 })
 
 ipcMain.handle('settings:set', (_e, partial) => {
-  const next = writeSettings(partial || {})
+  const patch = { ...(partial || {}) }
+  if (patch.uiFontSize != null) patch.uiFontSize = normalizeUiFontSize(patch.uiFontSize)
+  const next = writeSettings(patch)
   return {
     useSystemProxy: next.useSystemProxy !== false,
+    uiFontSize: normalizeUiFontSize(next.uiFontSize),
   }
 })
 

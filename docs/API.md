@@ -38,7 +38,8 @@ const list = await window.easyshell.listConnections()
 | `username` | `string` | 是 | 登录用户 |
 | `authType` | `'password' \| 'key'` | 是 | RDP 仅使用密码 |
 | `password` | `string` | 否 | 密码（内存中为明文） |
-| `privateKeyPath` | `string` | 否 | 私钥文件路径（SSH） |
+| `privateKeyId` | `string` | 否 | 本地私钥库中的 id（优先） |
+| `privateKeyPath` | `string` | 否 | 兼容旧版：私钥文件路径（SSH） |
 | `passphrase` | `string` | 否 | 私钥口令 |
 | `remark` | `string` | 否 | 备注 |
 | `folder` | `string` | 是 | 目录分组（不能为「未分组」） |
@@ -46,14 +47,32 @@ const list = await window.easyshell.listConnections()
 
 ### 2.2 本地存储路径
 
-| 文件 | 路径 |
-|------|------|
-| 连接 | macOS: `~/Library/Application Support/easyshell/connections.json` |
-| 连接 | Windows: `%APPDATA%/easyshell/connections.json` |
-| 目录 | 同目录下 `folders.json` |
-| 设置 | 同目录下 `settings.json` |
+| 环境 | 用户数据目录 |
+|------|----------------|
+| 正式包 | macOS: `~/Library/Application Support/easyshell/` |
+| 正式包 | Windows: `%APPDATA%/easyshell/` |
+| 开发（`EASY_SHELL_DEV=1`） | 同上，目录名为 `easyshell-dev` |
 
-落盘时 `password` / `passphrase` 会用系统 **safeStorage** 封装（非明文）；应用读入内存后自动还原。
+| 文件 | 说明 |
+|------|------|
+| `connections.json` | 连接列表（密码字段经 safeStorage 封装） |
+| `folders.json` | 目录分组 |
+| `private-keys.json` | 私钥库 |
+| `settings.json` | 设置（如是否使用系统代理） |
+
+落盘时 `password` / `passphrase` / 私钥 PEM 会用系统 **safeStorage** 封装（非明文）；应用读入内存后自动还原。
+
+### 2.3 RdpMonitorData（RDP 会话监控）
+
+与 SSH `MonitorData` 不同：RDP 通道无法采集远端 CPU/内存/进程。
+
+| 字段 | 说明 |
+|------|------|
+| `host` / `port` / `username` | 会话目标 |
+| `screen` | `{ width, height }` 协商分辨率 |
+| `connectedMs` | 已连接时长 |
+| `fps` / `frameCount` / `tileCount` / `bytesIn` | 画面传输概况 |
+| `status` | `connecting` \| `connected` \| `closed` |
 
 ---
 
@@ -79,12 +98,24 @@ const list = await window.easyshell.listConnections()
 | `renameFolder(old, new)` | `connections:renameFolder` | `{ oldName, newName }` | 目录列表 |
 | `deleteFolder(name, mode?, moveTo?)` | `connections:deleteFolder` | `mode`: `delete` 删连接 / `move` 迁走 | `{ folders, connections, removedConnections? }` |
 
-### 3.3 导入 / 导出 / 转换
+### 3.3 私钥库
+
+| 前端方法 | IPC Channel | 说明 |
+|----------|-------------|------|
+| `listKeys()` | `keys:list` | 列出私钥元信息（不含 PEM） |
+| `importKey()` | `keys:import` | 对话框导入私钥文件 |
+| `renameKey(id, name)` | `keys:rename` | 重命名 |
+| `deleteKey(id)` | `keys:delete` | 删除 |
+| `getKeyInfo(id)` | `keys:get` | 单条元信息 |
+
+连接表单通过 `privateKeyId` 引用库中私钥；SSH 打开会话时由主进程读取 PEM。
+
+### 3.4 导入 / 导出 / 转换
 
 | 前端方法 | IPC Channel | 行为 | 返回要点 |
 |----------|-------------|------|----------|
-| `exportBackup()` | `connections:exportBackup` | 选目录，按分组写出 `*_connect_config.json` | `{ path, connections, folders }` 或用户取消 `null` |
-| `importBackup()` | `connections:importBackup` | 选 EasyShell 导出目录并合并 | `{ imported, updated, total, ... }` |
+| `exportBackup({ folders? })` | `connections:exportBackup` | 选目录写出；可指定部分分组；含私钥备份文件 | `{ path, connections, folders, keys? }` 或 `null` |
+| `importBackup()` | `connections:importBackup` | 选 EasyShell 导出目录并合并（含私钥） | `{ imported, updated, total, ... }` |
 | `convertFinalShell()` | `connections:convertFinalShell` | ①选 FinalShell 目录 ②选保存目录 | `{ converted, files, path, ... }` |
 | `importFinalShell(dir?)` | `connections:importFinalShell` | 直接导入到本地库（开发/兼容） | `ImportResult` |
 | `pickImportDir()` | `connections:pickImportDir` | 仅选择目录 | 路径或 `null` |
@@ -97,6 +128,7 @@ const list = await window.easyshell.listConnections()
     主机名_connect_config.json
   分组B/
     ...
+  easyshell_private_keys.json   # 若有私钥
 ```
 
 **导出文件中的密码字段：**
@@ -105,7 +137,7 @@ const list = await window.easyshell.listConnections()
 - 口令材料在源码中异或混淆存放，运行时还原；界面不展示算法名称  
 - 与历史导出文件格式兼容  
 
-### 3.4 SSH 会话
+### 3.5 SSH 会话
 
 | 前端方法 | IPC Channel | 说明 |
 |----------|-------------|------|
@@ -136,7 +168,7 @@ const off = window.easyshell.onSessionData(({ sessionId, data }) => {
 off()
 ```
 
-### 3.5 SFTP 文件
+### 3.6 SFTP 文件
 
 | 前端方法 | IPC Channel | 说明 |
 |----------|-------------|------|
@@ -149,23 +181,36 @@ off()
 | `mkdir` / `rename` | `sftp:mkdir` / `sftp:rename` | 新建目录 / 重命名 |
 | `prepareDrag` + `startDrag` | `sftp:prepareDrag` / `drag:start` | macOS 拖出到访达 |
 
-### 3.6 Windows 远程桌面（RDP）
+### 3.7 Windows 远程桌面（RDP）
+
+默认在应用**内嵌标签页**中打开（`@electerm/rdpjs` + Canvas），使用已保存密码自动登录。  
+连接时按主区域尺寸协商分辨率；画面铺满显示区域。
 
 | 前端方法 | IPC Channel | 说明 |
 |----------|-------------|------|
-| `openRdpSession({ config })` | `rdp:open` | 内嵌 RDP 会话（`@electerm/rdpjs`，标签页 Canvas） |
+| `openRdpSession({ config })` | `rdp:open` | 内嵌 RDP；`config` 可带 `width`/`height` |
+| `closeRdpSession(sessionId)` | `rdp:close` | 关闭会话 |
+| `getRdpMonitor(sessionId)` | `rdp:monitor` | 会话信息（非 SSH 系统指标） |
+| `rdpPointer` / `rdpWheel` / `rdpKey` | `rdp:pointer` 等 | 键鼠输入（同步 send） |
 | `openRdpExternal(config)` | `rdp:openExternal` | 备选：生成临时 `.rdp` 并调用系统客户端 |
-| `getRdpMonitor(sessionId)` | `rdp:monitor` | RDP 会话信息（主机/分辨率/FPS/流量等，非 SSH 指标） |
+
+**主进程 → 渲染进程事件：**
+
+| 事件 | 说明 |
+|------|------|
+| `rdp:ready` | 会话就绪（含 screen） |
+| `rdp:bitmaps` | 位图块（可 Transferable） |
+| `rdp:error` / `rdp:closed` | 错误 / 关闭 |
+
+`openRdpExternal` 平台行为（备选路径）：
 
 | 平台 | 行为 |
 |------|------|
-| macOS | 优先 `Microsoft Remote Desktop`，否则系统打开 `.rdp` |
+| macOS | 优先 Microsoft Remote Desktop，否则系统打开 `.rdp` |
 | Windows | `mstsc.exe` |
 | Linux | 尝试 `xfreerdp`，否则打开 `.rdp` |
 
-返回：`{ path, app, host, port, hint }`
-
-### 3.7 设置与其它
+### 3.8 设置与其它
 
 | 前端方法 | IPC Channel | 说明 |
 |----------|-------------|------|
@@ -183,7 +228,7 @@ off()
 2. **本地库**：敏感字段经 Electron `safeStorage`（系统钥匙串/DPAPI）封装后写入磁盘。  
 3. **导入导出**：密码字段使用 CryptoJS AES 加密写入 JSON；口令材料在源码中异或混淆，不以明文常量出现。  
 4. **信任边界**：能执行渲染进程 JS（例如被篡改的前端包）即可调用 `window.easyshell`；请勿加载不可信远程页面。  
-5. **安装包**：不再打包示例 `SSH/` 配置目录。  
+5. **安装包**：不再打包示例 `SSH/` 配置目录；应用图标来自 `build/icon.*`。  
 
 > 桌面应用无法做到“绝对无法逆向”。当前方案目标是：抬高静态破解成本、避免磁盘明文密码、缩小误分发配置的风险。
 
@@ -196,7 +241,8 @@ off()
 | 网络不通 / 未走代理 | 包含「无法到达主机」或「网络不通」 |
 | 认证失败 | `认证失败：用户名/密码或私钥不正确` |
 | 导出目录无配置 | `未找到连接配置（*_connect_config.json）` |
-| RDP 客户端缺失 | `打开远程桌面失败` + 系统错误信息 |
+| RDP 会话不存在 | `RDP 会话不存在` |
+| RDP 外开客户端缺失 | `打开远程桌面失败` + 系统错误信息 |
 | 解密失败 | `密码解密失败` / `不是 EasyShell 备份文件` |
 
 ---

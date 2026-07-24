@@ -47,11 +47,12 @@ const list = await window.easyshell.listConnections()
 
 ### 2.2 本地存储路径
 
-| 环境 | 用户数据目录 |
+开发与正式包共用同一用户数据目录：
+
+| 平台 | 用户数据目录 |
 |------|----------------|
-| 正式包 | macOS: `~/Library/Application Support/easyshell/` |
-| 正式包 | Windows: `%APPDATA%/easyshell/` |
-| 开发（`EASY_SHELL_DEV=1`） | 同上，目录名为 `easyshell-dev` |
+| macOS | `~/Library/Application Support/easyshell/` |
+| Windows | `%APPDATA%/easyshell/` |
 
 | 文件 | 说明 |
 |------|------|

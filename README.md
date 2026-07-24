@@ -26,8 +26,8 @@ npm install
 npm run dev
 ```
 
-开发模式数据目录为 `easyshell-dev`，与正式安装包的 `easyshell` 隔离。  
-开发态 Dock 可能仍显示 Electron 默认图标/名称，属正常现象；正式包使用 `build/icon.*`。
+开发态 Dock 可能仍显示 Electron 默认图标/名称，属正常现象；正式包使用 `build/icon.*`。  
+连接配置与正式包共用同一数据目录（见下方「连接配置位置」）。
 
 ## 安装包（给别人用）
 
@@ -85,12 +85,10 @@ npm start
    - **Windows**：应用内嵌远程桌面标签（自动填入已保存密码），左侧显示 RDP 会话信息
 3. SSH 连接后可在文件面板浏览/上传/下载
 
-连接配置位置：
+连接配置位置（开发 / 正式包相同）：
 
-| 环境 | macOS | Windows |
-|------|-------|---------|
-| 正式包 | `~/Library/Application Support/easyshell/` | `%APPDATA%/easyshell/` |
-| 开发 | `~/Library/Application Support/easyshell-dev/` | `%APPDATA%/easyshell-dev/` |
+- macOS：`~/Library/Application Support/easyshell/`
+- Windows：`%APPDATA%/easyshell/`
 
 主要文件：`connections.json`、`folders.json`、`private-keys.json`、`settings.json`
 

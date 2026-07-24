@@ -42,6 +42,9 @@ const ssh = new SshManager()
 const rdpSessions = new RdpManager()
 let mainWindow = null
 
+// 开发 / 正式包共用同一配置目录（不使用 easyshell-dev）
+app.setPath('userData', path.join(app.getPath('appData'), 'easyshell'))
+
 // SSH 超时等异常不应弹出 Electron 原生崩溃框
 process.on('uncaughtException', (err) => {
   console.error('[easyshell] uncaughtException:', err)

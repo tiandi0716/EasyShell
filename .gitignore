@@ -1,7 +1,6 @@
 # dependencies / build
 node_modules/
 dist/
-out/
 release/
 
 # local / OS
@@ -9,15 +8,6 @@ release/
 *.log
 .env
 .env.*
-*.easyshell
 
 # editor / local agent rules
 .cursor/
-
-# sample / imported host configs (never ship)
-SSH/
-
-# manually downloaded packaging caches (use ~/Library/Caches instead)
-electron-v*.zip
-winCodeSign*.7z
-*.7z

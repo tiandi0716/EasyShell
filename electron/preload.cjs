@@ -118,6 +118,32 @@ contextBridge.exposeInMainWorld('easyshell', {
       return file?.path || ''
     }
   },
+  listTransfers: () => ipcRenderer.invoke('transfer:list'),
+  clearFinishedTransfers: () => ipcRenderer.invoke('transfer:clearFinished'),
+  clearTransfer: (id) => ipcRenderer.invoke('transfer:clear', id),
+  listLocalDir: (dirPath) => ipcRenderer.invoke('fs:listLocal', dirPath),
+  getSpecialDirs: () => ipcRenderer.invoke('fs:specialDirs'),
+  getParentDir: (dirPath) => ipcRenderer.invoke('fs:parentDir', dirPath),
+  onTransferUpdate: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('transfer:update', listener)
+    return () => ipcRenderer.removeListener('transfer:update', listener)
+  },
+  onTransferRemove: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('transfer:remove', listener)
+    return () => ipcRenderer.removeListener('transfer:remove', listener)
+  },
+  onTransferClear: (cb) => {
+    const listener = () => cb()
+    ipcRenderer.on('transfer:clear', listener)
+    return () => ipcRenderer.removeListener('transfer:clear', listener)
+  },
+  onTransferSnapshot: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('transfer:snapshot', listener)
+    return () => ipcRenderer.removeListener('transfer:snapshot', listener)
+  },
 
   onSessionData: (cb) => {
     const listener = (_e, payload) => cb(payload)

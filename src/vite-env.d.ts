@@ -51,6 +51,29 @@ export interface FileItem {
   group?: string
 }
 
+export interface TransferItem {
+  id: string
+  name: string
+  direction: 'upload' | 'download'
+  sessionId: string
+  localPath: string
+  remotePath: string
+  transferred: number
+  total: number
+  percent: number
+  status: 'active' | 'done' | 'error'
+  error?: string | null
+  updatedAt: number
+}
+
+export interface LocalFileItem {
+  name: string
+  path: string
+  isDir: boolean
+  size: number
+  mtime: number
+}
+
 export interface MonitorProcess {
   pid: string
   cpu: number
@@ -286,6 +309,21 @@ export interface EasyShellApi {
   rename: (sessionId: string, fromPath: string, toPath: string) => Promise<boolean>
   pickDirectory: (title?: string) => Promise<string | null>
   getPathForFile: (file: File) => string
+  listTransfers: () => Promise<TransferItem[]>
+  clearFinishedTransfers: () => Promise<TransferItem[]>
+  clearTransfer: (id?: string | null) => Promise<boolean>
+  listLocalDir: (dirPath?: string) => Promise<{ path: string; items: LocalFileItem[] }>
+  getSpecialDirs: () => Promise<{
+    home: string
+    desktop: string
+    documents: string
+    downloads: string
+  }>
+  getParentDir: (dirPath: string) => Promise<string>
+  onTransferUpdate: (cb: (item: TransferItem) => void) => () => void
+  onTransferRemove: (cb: (payload: { id: string }) => void) => () => void
+  onTransferClear: (cb: () => void) => () => void
+  onTransferSnapshot: (cb: (items: TransferItem[]) => void) => () => void
   onSessionData: (
     cb: (payload: { sessionId: string; data: string; offset?: number }) => void,
   ) => () => void

@@ -25,6 +25,7 @@ const {
 } = require('./proxy.cjs')
 const { openRdpConnection } = require('./rdp.cjs')
 const { RdpManager } = require('./rdp-manager.cjs')
+const { createTransferHub } = require('./transfer-hub.cjs')
 const {
   listKeys,
   importKeyFromFile,
@@ -40,6 +41,86 @@ const isDev = process.env.EASY_SHELL_DEV === '1'
 const ssh = new SshManager()
 const rdpSessions = new RdpManager()
 let mainWindow = null
+const transfers = createTransferHub(() => mainWindow)
+
+function bindFileTransfer(sessionId, direction) {
+  /** @type {Map<string, string>} localPath -> transfer id */
+  const active = new Map()
+  return (ev) => {
+    const key = `${direction}:${ev.localPath || ev.remotePath}`
+    if (ev.phase === 'start') {
+      const id = transfers.start({
+        name: ev.name,
+        direction,
+        sessionId,
+        localPath: ev.localPath,
+        remotePath: ev.remotePath,
+      })
+      if (ev.total > 0) transfers.progress(id, 0, ev.total)
+      active.set(key, id)
+      return
+    }
+    const id = active.get(key)
+    if (!id) return
+    if (ev.phase === 'progress') {
+      transfers.progress(id, ev.transferred || 0, ev.total || 0)
+    } else if (ev.phase === 'done') {
+      transfers.done(id)
+      active.delete(key)
+    } else if (ev.phase === 'error') {
+      transfers.done(id, ev.error?.message || ev.error || '失败')
+      active.delete(key)
+    }
+  }
+}
+
+async function chooseUploadPaths() {
+  // 保留兜底：渲染进程自定义选择器优先
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择要上传的文件',
+    buttonLabel: '上传',
+    properties: ['openFile', 'multiSelections'],
+  })
+  if (result.canceled || !result.filePaths.length) return []
+  return result.filePaths
+}
+
+function listLocalDir(dirPath) {
+  const dir = dirPath || app.getPath('home')
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    throw new Error('目录不存在')
+  }
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  const items = []
+  for (const entry of entries) {
+    if (entry.name === '.DS_Store' || entry.name === 'Thumbs.db') continue
+    const full = path.join(dir, entry.name)
+    let isDir = entry.isDirectory()
+    let size = 0
+    let mtime = 0
+    try {
+      // 部分系统入口可能是符号链接
+      const st = fs.statSync(full)
+      isDir = st.isDirectory()
+      size = isDir ? 0 : st.size
+      mtime = Math.floor(st.mtimeMs / 1000)
+    } catch {
+      continue
+    }
+    items.push({
+      name: entry.name,
+      path: full,
+      isDir,
+      size,
+      mtime,
+    })
+  }
+  items.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+    return a.name.localeCompare(b.name, 'zh-CN')
+  })
+  return { path: dir, items }
+}
 
 // 开发 / 正式包共用同一配置目录（不使用 easyshell-dev）
 app.setPath('userData', path.join(app.getPath('appData'), 'easyshell'))
@@ -644,9 +725,11 @@ ipcMain.handle('sftp:download', async (_e, { sessionId, remotePath }) => {
   if (!session) throw new Error('会话不存在')
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: path.basename(remotePath),
+    buttonLabel: '下载',
   })
   if (result.canceled || !result.filePath) return null
-  await session.download(remotePath, result.filePath)
+  const onFile = bindFileTransfer(sessionId, 'download')
+  await session.downloadRecursive(remotePath, result.filePath, false, onFile)
   return result.filePath
 })
 
@@ -659,6 +742,7 @@ ipcMain.handle('sftp:downloadToDir', async (_e, { sessionId, items, localDir }) 
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory', 'createDirectory'],
       title: '选择本地下载目录',
+      buttonLabel: '下载到此',
     })
     if (result.canceled || !result.filePaths[0]) return null
     targetDir = result.filePaths[0]
@@ -666,10 +750,11 @@ ipcMain.handle('sftp:downloadToDir', async (_e, { sessionId, items, localDir }) 
 
   fs.mkdirSync(targetDir, { recursive: true })
   const saved = []
+  const onFile = bindFileTransfer(sessionId, 'download')
   for (const item of items || []) {
     const remotePath = item.remotePath
     const localPath = path.join(targetDir, path.basename(remotePath))
-    await session.downloadRecursive(remotePath, localPath, !!item.isDir)
+    await session.downloadRecursive(remotePath, localPath, !!item.isDir, onFile)
     saved.push(localPath)
   }
   return { dir: targetDir, files: saved }
@@ -678,14 +763,15 @@ ipcMain.handle('sftp:downloadToDir', async (_e, { sessionId, items, localDir }) 
 ipcMain.handle('sftp:upload', async (_e, { sessionId, remotePath }) => {
   const session = ssh.get(sessionId)
   if (!session) throw new Error('会话不存在')
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile', 'multiSelections'],
-  })
-  if (result.canceled || !result.filePaths.length) return []
+  const filePaths = await chooseUploadPaths()
+  if (!filePaths.length) return []
+
   const uploaded = []
-  for (const localPath of result.filePaths) {
+  const onFile = bindFileTransfer(sessionId, 'upload')
+  for (const localPath of filePaths) {
+    if (!localPath || !fs.existsSync(localPath)) continue
     const target = path.posix.join(remotePath || '.', path.basename(localPath))
-    await session.upload(localPath, target)
+    await session.uploadRecursive(localPath, target, onFile)
     uploaded.push(target)
   }
   return uploaded
@@ -695,15 +781,39 @@ ipcMain.handle('sftp:uploadPaths', async (_e, { sessionId, remotePath, localPath
   const session = ssh.get(sessionId)
   if (!session) throw new Error('会话不存在')
   const uploaded = []
+  const onFile = bindFileTransfer(sessionId, 'upload')
   for (const localPath of localPaths || []) {
     if (!localPath || !fs.existsSync(localPath)) continue
-    const stat = fs.statSync(localPath)
-    if (stat.isDirectory()) continue
     const target = path.posix.join(remotePath || '.', path.basename(localPath))
-    await session.upload(localPath, target)
+    await session.uploadRecursive(localPath, target, onFile)
     uploaded.push(target)
   }
   return uploaded
+})
+
+ipcMain.handle('transfer:list', async () => transfers.list())
+ipcMain.handle('transfer:clearFinished', async () => {
+  transfers.clearFinished()
+  return transfers.list()
+})
+ipcMain.handle('transfer:clear', async (_e, id) => {
+  transfers.clear(id || null)
+  return true
+})
+
+ipcMain.handle('fs:specialDirs', async () => ({
+  home: app.getPath('home'),
+  desktop: app.getPath('desktop'),
+  documents: app.getPath('documents'),
+  downloads: app.getPath('downloads'),
+}))
+
+ipcMain.handle('fs:listLocal', async (_e, dirPath) => listLocalDir(dirPath))
+
+ipcMain.handle('fs:parentDir', async (_e, dirPath) => {
+  if (!dirPath) return app.getPath('home')
+  const parent = path.dirname(dirPath)
+  return parent && parent !== dirPath ? parent : dirPath
 })
 
 ipcMain.handle('sftp:remove', async (_e, { sessionId, remotePath, isDir }) => {

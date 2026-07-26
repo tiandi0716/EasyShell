@@ -12,6 +12,8 @@ import { formatBytes, formatTime, joinPath, parentPath } from '../utils/format'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import PromptDialog from './PromptDialog'
 import ConfirmDialog from './ConfirmDialog'
+import UploadPickerDialog from './UploadPickerDialog'
+
 
 interface Props {
   sessionId: string
@@ -45,6 +47,7 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
   const [ctx, setCtx] = useState<CtxState | null>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [showUploadPicker, setShowUploadPicker] = useState(false)
 
   const dragDepth = useRef(0)
   const jumpAppliedRef = useRef(0)
@@ -153,9 +156,21 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
   }
 
   async function handleUpload() {
+    setShowUploadPicker(true)
+  }
+
+  async function uploadLocalPaths(paths: string[]) {
+    if (!paths.length) {
+      setError('未能读取拖入的本地路径，请改用「上传」按钮选择')
+      return
+    }
     try {
-      setBusy('正在上传…')
-      await window.easyshell.upload(sessionId, cwd)
+      setBusy(`正在上传 ${paths.length} 项…`)
+      setError('')
+      const uploaded = await window.easyshell.uploadPaths(sessionId, cwd, paths)
+      if (!uploaded.length) {
+        setError('未上传任何文件')
+      }
       await refresh(cwd, false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -164,21 +179,9 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
     }
   }
 
-  async function uploadLocalPaths(paths: string[]) {
-    if (!paths.length) return
-    try {
-      setBusy(`正在上传 ${paths.length} 个文件…`)
-      setError('')
-      const uploaded = await window.easyshell.uploadPaths(sessionId, cwd, paths)
-      if (!uploaded.length) {
-        setError('未上传任何文件（暂不支持拖入文件夹，请选择普通文件）')
-      }
-      await refresh(cwd, false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy('')
-    }
+  async function onUploadPicked(paths: string[]) {
+    setShowUploadPicker(false)
+    await uploadLocalPaths(paths)
   }
 
   /** 统一下载：文件走另存为，文件夹选目录；useLast 则直接进上次目录 */
@@ -373,11 +376,26 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
     e.stopPropagation()
     dragDepth.current = 0
     setDragOver(false)
-    const filesList = [...e.dataTransfer.files]
-    const paths = filesList
-      .map((f) => window.easyshell.getPathForFile(f))
-      .filter(Boolean)
-    await uploadLocalPaths(paths)
+
+    const pathSet = new Set<string>()
+
+    // 优先从 items 取路径（对文件夹更稳）
+    const items = e.dataTransfer.items ? [...e.dataTransfer.items] : []
+    for (const item of items) {
+      if (item.kind !== 'file') continue
+      const file = item.getAsFile()
+      if (!file) continue
+      const p = window.easyshell.getPathForFile(file)
+      if (p) pathSet.add(p)
+    }
+
+    // 再兜底 files 列表
+    for (const file of [...e.dataTransfer.files]) {
+      const p = window.easyshell.getPathForFile(file)
+      if (p) pathSet.add(p)
+    }
+
+    await uploadLocalPaths([...pathSet])
   }
 
   return (
@@ -392,7 +410,12 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
         <button className="btn btn-ghost btn-sm" onClick={() => void refresh(cwd, false)} disabled={loading}>
           刷新
         </button>
-        <button className="btn btn-ghost btn-sm" onClick={() => void handleUpload()} disabled={!!busy}>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => void handleUpload()}
+          disabled={!!busy}
+          title="勾选文件或文件夹后点「上传」；双击文件夹可进入"
+        >
           上传
         </button>
         <button
@@ -552,6 +575,13 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
             void handleRemove(item, force)
           }}
           onClose={() => setDialog(null)}
+        />
+      ) : null}
+
+      {showUploadPicker ? (
+        <UploadPickerDialog
+          onConfirm={(paths) => void onUploadPicked(paths)}
+          onClose={() => setShowUploadPicker(false)}
         />
       ) : null}
     </div>

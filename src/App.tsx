@@ -21,6 +21,7 @@ import RecentConnections from './components/RecentConnections'
 import RdpView from './components/RdpView'
 import SettingsDialog from './components/SettingsDialog'
 import TerminalView from './components/TerminalView'
+import TransferMenu from './components/TransferMenu'
 import { extractPwdPath } from './utils/pwdSync'
 import { applyUiFontSize } from './utils/uiFontSize'
 import {
@@ -788,6 +789,8 @@ export default function App() {
               </button>
             ))
           )}
+          <div className="tabbar-spacer" />
+          <TransferMenu />
         </div>
 
         {activeTab?.error ? <div className="error-banner">{activeTab.error}</div> : null}

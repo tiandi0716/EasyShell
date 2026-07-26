@@ -348,26 +348,38 @@ class Session extends EventEmitter {
     })
   }
 
-  download(remotePath, localPath) {
+  download(remotePath, localPath, onProgress) {
     return new Promise((resolve, reject) => {
       if (!this.sftp) {
         reject(new Error('SFTP 未就绪'))
         return
       }
-      this.sftp.fastGet(remotePath, localPath, (err) => {
+      const opts = {}
+      if (typeof onProgress === 'function') {
+        opts.step = (transferred, _chunk, total) => {
+          onProgress(transferred, total)
+        }
+      }
+      this.sftp.fastGet(remotePath, localPath, opts, (err) => {
         if (err) reject(err)
         else resolve(localPath)
       })
     })
   }
 
-  upload(localPath, remotePath) {
+  upload(localPath, remotePath, onProgress) {
     return new Promise((resolve, reject) => {
       if (!this.sftp) {
         reject(new Error('SFTP 未就绪'))
         return
       }
-      this.sftp.fastPut(localPath, remotePath, (err) => {
+      const opts = {}
+      if (typeof onProgress === 'function') {
+        opts.step = (transferred, _chunk, total) => {
+          onProgress(transferred, total)
+        }
+      }
+      this.sftp.fastPut(localPath, remotePath, opts, (err) => {
         if (err) reject(err)
         else resolve(remotePath)
       })
@@ -423,10 +435,23 @@ class Session extends EventEmitter {
     return this.removeForce(remotePath)
   }
 
-  async downloadRecursive(remotePath, localPath, isDir) {
+  async downloadRecursive(remotePath, localPath, isDir, onFile) {
     if (!isDir) {
       fs.mkdirSync(path.dirname(localPath), { recursive: true })
-      return this.download(remotePath, localPath)
+      const name = path.basename(localPath)
+      const notify =
+        typeof onFile === 'function'
+          ? (transferred, total) => onFile({ name, localPath, remotePath, transferred, total, phase: 'progress' })
+          : undefined
+      if (typeof onFile === 'function') onFile({ name, localPath, remotePath, phase: 'start' })
+      try {
+        await this.download(remotePath, localPath, notify)
+        if (typeof onFile === 'function') onFile({ name, localPath, remotePath, phase: 'done' })
+      } catch (err) {
+        if (typeof onFile === 'function') onFile({ name, localPath, remotePath, phase: 'error', error: err })
+        throw err
+      }
+      return localPath
     }
     fs.mkdirSync(localPath, { recursive: true })
     const items = await this.listDir(remotePath)
@@ -434,9 +459,52 @@ class Session extends EventEmitter {
       if (item.name === '..') continue
       const remoteChild = path.posix.join(remotePath, item.name)
       const localChild = path.join(localPath, item.name)
-      await this.downloadRecursive(remoteChild, localChild, item.isDir)
+      await this.downloadRecursive(remoteChild, localChild, item.isDir, onFile)
     }
     return localPath
+  }
+
+  async ensureDir(remotePath) {
+    if (!remotePath || remotePath === '/' || remotePath === '.') return
+    try {
+      await this.mkdir(remotePath)
+    } catch (err) {
+      // ssh2: 4=Failure, 11=File already exists；部分服务仅返回文案
+      if (err && (err.code === 4 || err.code === 11)) return
+      const msg = String(err?.message || err)
+      if (/exist|EXIST|Failure|file exists/i.test(msg)) return
+      throw err
+    }
+  }
+
+  async uploadRecursive(localPath, remotePath, onFile) {
+    const stat = fs.statSync(localPath)
+    if (!stat.isDirectory()) {
+      const name = path.basename(localPath)
+      const notify =
+        typeof onFile === 'function'
+          ? (transferred, total) => onFile({ name, localPath, remotePath, transferred, total, phase: 'progress' })
+          : undefined
+      if (typeof onFile === 'function') onFile({ name, localPath, remotePath, phase: 'start', total: stat.size })
+      try {
+        await this.upload(localPath, remotePath, notify)
+        if (typeof onFile === 'function') onFile({ name, localPath, remotePath, phase: 'done' })
+      } catch (err) {
+        if (typeof onFile === 'function') onFile({ name, localPath, remotePath, phase: 'error', error: err })
+        throw err
+      }
+      return remotePath
+    }
+    await this.ensureDir(remotePath)
+    const entries = fs.readdirSync(localPath, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.name === '.' || entry.name === '..') continue
+      if (entry.name === '.DS_Store' || entry.name === 'Thumbs.db') continue
+      const localChild = path.join(localPath, entry.name)
+      const remoteChild = path.posix.join(remotePath, entry.name)
+      await this.uploadRecursive(localChild, remoteChild, onFile)
+    }
+    return remotePath
   }
 
   dispose() {

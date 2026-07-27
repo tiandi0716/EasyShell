@@ -33,9 +33,11 @@ export default function TerminalView({
 
     const term = new Terminal({
       cursorBlink: true,
+      cursorStyle: 'bar',
+      cursorWidth: 1.5,
       fontFamily: '"IBM Plex Mono", Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
-      lineHeight: 1.2,
+      lineHeight: 1.15,
       theme: {
         background: '#002b36',
         foreground: '#f3f7fb',

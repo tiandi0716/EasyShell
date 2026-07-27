@@ -5,7 +5,7 @@ import { formatBytes } from '../utils/format'
 
 function TransferIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M8.2 15.8V8.4m0 0L6 10.5M8.2 8.4l2.2 2.1"
         stroke="currentColor"

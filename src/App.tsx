@@ -61,10 +61,33 @@ const SIDEBAR_MIN = 260
 const SIDEBAR_DEFAULT = 320
 const SIDEBAR_WIDTH_KEY = 'easyshell.sidebarWidth'
 const SIDEBAR_COLLAPSED_KEY = 'easyshell.sidebarCollapsed'
+const FILES_RATIO_KEY = 'easyshell.filesRatio'
+const FILES_RATIO_DEFAULT = 0.42
+const FILES_RATIO_MIN = 0.12
+const FILES_RATIO_MAX = 0.75
 
 function readSidebarWidth() {
   const n = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
   return Number.isFinite(n) && n >= SIDEBAR_MIN ? n : SIDEBAR_DEFAULT
+}
+
+function readFilesRatio() {
+  const n = Number(localStorage.getItem(FILES_RATIO_KEY))
+  return Number.isFinite(n) && n >= FILES_RATIO_MIN && n <= FILES_RATIO_MAX
+    ? n
+    : FILES_RATIO_DEFAULT
+}
+
+function persistSidebarWidth(width: number) {
+  if (width >= SIDEBAR_MIN) {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width))
+  }
+}
+
+function persistFilesRatio(ratio: number) {
+  if (ratio >= FILES_RATIO_MIN && ratio <= FILES_RATIO_MAX) {
+    localStorage.setItem(FILES_RATIO_KEY, String(ratio))
+  }
 }
 
 export default function App() {
@@ -76,11 +99,14 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
   const [createConnType, setCreateConnType] = useState<'ssh' | 'rdp'>('ssh')
-  const [filesRatio, setFilesRatio] = useState(0.42)
+  const [filesRatio, setFilesRatio] = useState(readFilesRatio)
+  const [filesCollapsed, setFilesCollapsed] = useState(false)
+  const lastFilesRatioRef = useRef(readFilesRatio())
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   )
+  const lastSidebarWidthRef = useRef(readSidebarWidth())
   /** FinalShell 风格：连接管理从标签栏左侧按钮展开（默认不弹出） */
   const [showConnManager, setShowConnManager] = useState(false)
   const [dialog, setDialog] = useState<DialogState>(null)
@@ -412,8 +438,7 @@ export default function App() {
   }
 
   async function handleCopyAddress(conn: ConnectionConfig) {
-    const text = `${conn.host}:${conn.port || 22}`
-    await window.easyshell.writeClipboard(text)
+    await window.easyshell.writeClipboard(conn.host)
   }
 
   async function handleCopySshCommand(conn: ConnectionConfig) {
@@ -569,52 +594,143 @@ export default function App() {
 
   function startResize(e: ReactMouseEvent) {
     e.preventDefault()
-    const startY = e.clientY
-    const startRatio = filesRatio
+    let collapsed = filesCollapsed
+    // 本次拖动开始前的稳定位置：收起后只恢复到这里，不被拖动过程中的中间值覆盖
+    const ratioAtStart =
+      !collapsed && filesRatio >= FILES_RATIO_MIN
+        ? filesRatio
+        : lastFilesRatioRef.current >= FILES_RATIO_MIN
+          ? lastFilesRatioRef.current
+          : readFilesRatio()
+    let currentRatio = collapsed ? ratioAtStart : filesRatio
+    if (!collapsed && filesRatio >= FILES_RATIO_MIN) {
+      lastFilesRatioRef.current = filesRatio
+      persistFilesRatio(filesRatio)
+    }
+
     const onMove = (ev: MouseEvent) => {
       const workspace = document.querySelector('.split-workspace') as HTMLElement | null
       if (!workspace) return
       const rect = workspace.getBoundingClientRect()
-      const delta = (ev.clientY - startY) / rect.height
-      setFilesRatio(Math.min(0.7, Math.max(0.22, startRatio - delta)))
+      if (rect.height < 1) return
+      const fromBottom = rect.bottom - ev.clientY
+      const nextRatio = fromBottom / rect.height
+      if (fromBottom < 48 || nextRatio < 0.08) {
+        if (!collapsed) {
+          lastFilesRatioRef.current = ratioAtStart
+          persistFilesRatio(ratioAtStart)
+        }
+        collapsed = true
+        currentRatio = 0
+        setFilesCollapsed(true)
+        setFilesRatio(0)
+        return
+      }
+      collapsed = false
+      currentRatio = Math.min(FILES_RATIO_MAX, Math.max(FILES_RATIO_MIN, nextRatio))
+      setFilesCollapsed(false)
+      setFilesRatio(currentRatio)
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      document.body.classList.remove('resizing-rows')
+      if (collapsed) {
+        lastFilesRatioRef.current = ratioAtStart
+        persistFilesRatio(ratioAtStart)
+        return
+      }
+      if (currentRatio >= FILES_RATIO_MIN) {
+        lastFilesRatioRef.current = currentRatio
+        persistFilesRatio(currentRatio)
+      }
     }
+    document.body.classList.add('resizing-rows')
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
 
+  function restoreFilesPanel() {
+    const ratio = readFilesRatio()
+    lastFilesRatioRef.current = ratio
+    setFilesCollapsed(false)
+    setFilesRatio(ratio)
+  }
+
   function startSidebarResize(e: ReactMouseEvent) {
     e.preventDefault()
-    const startX = e.clientX
-    const startW = sidebarWidthRef.current
+    let collapsed = sidebarCollapsed
+    const widthAtStart =
+      !collapsed && sidebarWidthRef.current >= SIDEBAR_MIN
+        ? sidebarWidthRef.current
+        : lastSidebarWidthRef.current >= SIDEBAR_MIN
+          ? lastSidebarWidthRef.current
+          : readSidebarWidth()
+    let currentWidth = collapsed ? widthAtStart : sidebarWidthRef.current
+    if (!collapsed && sidebarWidthRef.current >= SIDEBAR_MIN) {
+      lastSidebarWidthRef.current = sidebarWidthRef.current
+      persistSidebarWidth(sidebarWidthRef.current)
+    }
+
     const onMove = (ev: MouseEvent) => {
+      const app = document.querySelector('.app') as HTMLElement | null
+      if (!app) return
+      const rect = app.getBoundingClientRect()
+      const fromLeft = ev.clientX - rect.left
       const max = Math.floor(window.innerWidth * 0.55)
-      const next = Math.min(max, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)))
-      setSidebarWidth(next)
+      if (fromLeft < 48) {
+        if (!collapsed) {
+          lastSidebarWidthRef.current = widthAtStart
+          persistSidebarWidth(widthAtStart)
+        }
+        collapsed = true
+        setSidebarCollapsed(true)
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, '1')
+        return
+      }
+      collapsed = false
+      currentWidth = Math.min(max, Math.max(SIDEBAR_MIN, fromLeft))
+      setSidebarCollapsed(false)
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, '0')
+      setSidebarWidth(currentWidth)
+      sidebarWidthRef.current = currentWidth
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidthRef.current))
       document.body.classList.remove('resizing-sidebar')
+      if (collapsed) {
+        lastSidebarWidthRef.current = widthAtStart
+        persistSidebarWidth(widthAtStart)
+        // 收起后状态里可能残留拖动中的中间宽度，恢复时以记住的位置为准
+        setSidebarWidth(widthAtStart)
+        sidebarWidthRef.current = widthAtStart
+        return
+      }
+      if (currentWidth >= SIDEBAR_MIN) {
+        lastSidebarWidthRef.current = currentWidth
+        persistSidebarWidth(currentWidth)
+      }
     }
     document.body.classList.add('resizing-sidebar')
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
 
-  function setCollapsed(next: boolean) {
-    setSidebarCollapsed(next)
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0')
+  function restoreSidebar() {
+    const width = readSidebarWidth()
+    lastSidebarWidthRef.current = width
+    setSidebarWidth(width)
+    sidebarWidthRef.current = width
+    setSidebarCollapsed(false)
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, '0')
   }
 
   function resetSidebarWidth() {
     setSidebarWidth(SIDEBAR_DEFAULT)
     sidebarWidthRef.current = SIDEBAR_DEFAULT
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(SIDEBAR_DEFAULT))
+    lastSidebarWidthRef.current = SIDEBAR_DEFAULT
+    persistSidebarWidth(SIDEBAR_DEFAULT)
   }
 
   return (
@@ -625,49 +741,8 @@ export default function App() {
             <div className="brand-text">
               <div className="brand-title-row">
                 <h1>EasyShell</h1>
-                <button
-                  type="button"
-                  className="brand-settings-btn"
-                  title="设置"
-                  aria-label="设置"
-                  onClick={() => setShowSettings(true)}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path
-                      d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                    />
-                    <path
-                      d="M19.4 13a7.8 7.8 0 0 0 .05-2l2.05-1.6-2-3.46-2.45.9a7.7 7.7 0 0 0-1.73-1L14.9 3h-5.8l-.42 2.84a7.7 7.7 0 0 0-1.73 1l-2.45-.9-2 3.46L4.55 11a7.8 7.8 0 0 0 0 2l-2.05 1.6 2 3.46 2.45-.9c.53.42 1.11.76 1.73 1L9.1 21h5.8l.42-2.84c.62-.24 1.2-.58 1.73-1l2.45.9 2-3.46L19.4 13Z"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
               </div>
               <KoaIcon size={34} />
-            </div>
-            <div className="brand-actions">
-              {sidebarWidth !== SIDEBAR_DEFAULT ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm sidebar-toggle"
-                  title="恢复左侧栏默认宽度"
-                  onClick={resetSidebarWidth}
-                >
-                  恢复左侧栏
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm sidebar-toggle"
-                title="收起左侧栏"
-                onClick={() => setCollapsed(true)}
-              >
-                收起左侧栏
-              </button>
             </div>
           </div>
 
@@ -684,12 +759,27 @@ export default function App() {
           />
         </div>
         </aside>
-      ) : null}
+      ) : (
+        <div className="sidebar-restore-bar" onMouseDown={startSidebarResize}>
+          <button
+            type="button"
+            className="sidebar-restore-btn"
+            title="恢复左侧栏"
+            onClick={(e) => {
+              e.stopPropagation()
+              restoreSidebar()
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            恢复左侧栏
+          </button>
+        </div>
+      )}
 
       {!sidebarCollapsed ? (
         <div
           className="sidebar-resizer"
-          title="拖动调整宽度；双击恢复默认宽度"
+          title="向左拖动可收起；双击恢复默认宽度"
           onMouseDown={startSidebarResize}
           onDoubleClick={(e) => {
             e.preventDefault()
@@ -708,7 +798,7 @@ export default function App() {
             aria-expanded={showConnManager}
             onClick={() => setShowConnManager((v) => !v)}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path
                 d="M4 7.2A2.2 2.2 0 0 1 6.2 5h4.1l1.4 1.6H17.8A2.2 2.2 0 0 1 20 8.8v7A2.2 2.2 0 0 1 17.8 18H6.2A2.2 2.2 0 0 1 4 15.8V7.2Z"
                 stroke="currentColor"
@@ -723,16 +813,6 @@ export default function App() {
               />
             </svg>
           </button>
-          {sidebarCollapsed ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm sidebar-open-btn"
-              title="显示左侧栏"
-              onClick={() => setCollapsed(false)}
-            >
-              展开侧栏
-            </button>
-          ) : null}
           {tabs.length === 0 ? (
             <span className="tab-placeholder">未连接</span>
           ) : (
@@ -775,6 +855,27 @@ export default function App() {
           )}
           <div className="tabbar-spacer" />
           <TransferMenu />
+          <button
+            type="button"
+            className="tabbar-settings-btn"
+            title="设置"
+            aria-label="设置"
+            onClick={() => setShowSettings(true)}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                stroke="currentColor"
+                strokeWidth="1.7"
+              />
+              <path
+                d="M19.4 13a7.8 7.8 0 0 0 .05-2l2.05-1.6-2-3.46-2.45.9a7.7 7.7 0 0 0-1.73-1L14.9 3h-5.8l-.42 2.84a7.7 7.7 0 0 0-1.73 1l-2.45-.9-2 3.46L4.55 11a7.8 7.8 0 0 0 0 2l-2.05 1.6 2 3.46 2.45-.9c.53.42 1.11.76 1.73 1L9.1 21h5.8l.42-2.84c.62-.24 1.2-.58 1.73-1l2.45.9 2-3.46L19.4 13Z"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
 
         {activeTab?.error ? <div className="error-banner">{activeTab.error}</div> : null}
@@ -783,17 +884,6 @@ export default function App() {
           {showConnManager ? (
             <div className="conn-manager-float">
               <div className="conn-panel">
-                <div className="conn-panel-head">
-                  <strong>连接管理</strong>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    title="关闭"
-                    onClick={() => setShowConnManager(false)}
-                  >
-                    ×
-                  </button>
-                </div>
                 <ConnectionTree
                   connections={connections}
                   folders={folders}
@@ -835,7 +925,10 @@ export default function App() {
           ) : null}
 
         <div className="split-workspace">
-          <div className="terminal-pane" style={{ flex: isRdpLayout ? 1 : 1 - filesRatio }}>
+          <div
+            className="terminal-pane"
+            style={{ flex: isRdpLayout || filesCollapsed ? 1 : 1 - filesRatio }}
+          >
             {!activeTab ? (
               <RecentConnections
                 recent={recent}
@@ -909,9 +1002,27 @@ export default function App() {
             )}
           </div>
 
-          {!isRdpLayout ? <div className="split-bar" onMouseDown={startResize} /> : null}
+          {!isRdpLayout && filesCollapsed ? (
+            <div className="files-restore-bar" onMouseDown={startResize}>
+              <button
+                type="button"
+                className="files-restore-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  restoreFilesPanel()
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                恢复下边栏
+              </button>
+            </div>
+          ) : null}
 
-          {!isRdpLayout ? (
+          {!isRdpLayout && !filesCollapsed ? (
+            <div className="split-bar" onMouseDown={startResize} />
+          ) : null}
+
+          {!isRdpLayout && !filesCollapsed ? (
             <div className="files-slot" style={{ flex: filesRatio }}>
               {activeTab?.status === 'ready' && activeTab.kind !== 'rdp' ? (
                 <FileBrowser
@@ -1081,6 +1192,11 @@ export default function App() {
           y={tabMenu.y}
           items={[
             { key: 'duplicate', label: '复制标签' },
+            {
+              key: 'copyAddress',
+              label: '复制地址',
+              disabled: !tabMenu.tab.connectionId,
+            },
             { key: 'sep1', label: '', separator: true },
             {
               key: 'connect',
@@ -1116,6 +1232,16 @@ export default function App() {
           onSelect={(key) => {
             const tab = tabMenu.tab
             if (key === 'duplicate') void duplicateTab(tab)
+            if (key === 'copyAddress') {
+              const conn = connections.find((c) => c.id === tab.connectionId)
+              if (conn) void handleCopyAddress(conn)
+              else
+                setDialog({
+                  type: 'alert',
+                  title: '无法复制',
+                  message: '找不到对应的主机配置',
+                })
+            }
             if (key === 'connect') void reconnectTab(tab)
             if (key === 'connectAll') void reconnectAllTabs()
             if (key === 'disconnect') void disconnectTab(tab.id)

@@ -106,6 +106,11 @@ body.resizing-sidebar {
   user-select: none;
 }
 
+body.resizing-rows {
+  cursor: row-resize;
+  user-select: none;
+}
+
 .brand {
   display: flex;
   align-items: flex-start;
@@ -144,30 +149,6 @@ body.platform-linux .brand {
   color: #1f3b57;
 }
 
-.brand-settings-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  color: #5a738c;
-  background: transparent;
-  border: 1px solid transparent;
-  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-  -webkit-app-region: no-drag;
-}
-
-.brand-settings-btn:hover {
-  color: var(--accent);
-  background: #e8f2fb;
-  border-color: #c9dced;
-}
-
-.brand-settings-btn:active {
-  transform: translateY(0.5px);
-}
-
 .koa-icon {
   display: block;
   flex: 0 0 auto;
@@ -176,21 +157,78 @@ body.platform-linux .brand {
 
 .brand-actions {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 4px;
   flex: 0 0 auto;
   -webkit-app-region: no-drag;
 }
 
-.sidebar-toggle,
-.sidebar-open-btn {
-  flex: 0 0 auto;
+.sidebar-restore-bar {
+  flex: 0 0 32px;
+  width: 32px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  background: linear-gradient(90deg, #e8eef5 0%, #d9e3ee 100%);
+  border-right: 1px solid #b8c6d6;
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.55);
+  z-index: 5;
+}
+
+body.platform-darwin .sidebar-restore-bar {
+  padding-top: 28px;
+}
+
+.sidebar-restore-btn {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.06em;
+  height: auto;
+  padding: 12px 4px;
+  border: 1px solid #9eb6cb;
+  border-radius: 4px;
+  background: #f7fafc;
+  color: #1f5f9a;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
   -webkit-app-region: no-drag;
 }
 
-.sidebar-open-btn {
-  margin-right: 6px;
-  margin-bottom: 2px;
+.sidebar-restore-btn:hover {
+  background: #e5f0fb;
+  border-color: #6f9ec8;
+}
+
+/* 侧栏收起时，标签栏左侧给交通灯让位 */
+body.platform-darwin .app.is-sidebar-collapsed .tabbar {
+  padding-left: 52px;
+}
+
+.tabbar-settings-btn {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  width: 36px;
+  height: 34px;
+  margin: 0 6px 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #3f5a72;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.tabbar-settings-btn:hover {
+  background: #d5e4f4;
+  border-color: #b7cce3;
+  color: #1a5aa0;
 }
 
 /* Windows / Linux：侧栏与内容区更紧凑，贴近 mac 观感 */
@@ -760,16 +798,19 @@ body.platform-linux .conn-toolbar {
   position: relative;
   display: flex;
   flex-direction: column;
+  /* 右侧留浅色边，方便感知已到窗口右缘 */
+  padding-right: 12px;
+  background: #e8ecf1;
 }
 
 .conn-manager-btn {
   flex: 0 0 auto;
-  align-self: center;
-  width: 34px;
-  height: 30px;
-  margin: 0 10px 8px 8px;
+  align-self: flex-end;
+  width: 36px;
+  height: 34px;
+  margin: 0 6px 4px 4px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: #2f6fbf;
   display: inline-flex;
@@ -810,9 +851,8 @@ body.platform-linux .conn-toolbar {
   background: #f2f5f8;
 }
 
-.conn-manager-float .conn-panel-head {
-  background: #e8eef5;
-  border-bottom: 1px solid #d5e0ea;
+.conn-manager-float .conn-tree {
+  padding-top: 12px;
 }
 
 .tabbar {
@@ -821,21 +861,20 @@ body.platform-linux .conn-toolbar {
   align-items: flex-end;
   align-content: flex-end;
   gap: 2px;
-  padding: 8px 12px 0;
-  min-height: 40px;
-  max-height: 148px;
+  padding: 6px 8px 0;
+  min-height: 36px;
+  max-height: 110px;
   border-bottom: 1px solid var(--border);
   background: #dfe6ee;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
+/* 交通灯空白已在左侧栏预留，主区横幅不再额外垫高 */
 body.platform-darwin .tabbar {
-  padding: 36px 12px 0;
-  min-height: 68px;
-  /* macOS 隐藏标题栏：空白处可拖动窗口 */
   -webkit-app-region: drag;
 }
+
 
 .tabbar-spacer {
   flex: 1 1 auto;
@@ -846,8 +885,8 @@ body.platform-darwin .tabbar {
 
 .tab-placeholder {
   color: var(--text-dim);
-  font-size: 13px;
-  padding: 8px;
+  font-size: 12px;
+  padding: 6px 8px 8px;
 }
 
 body.platform-darwin .tab-placeholder {
@@ -857,12 +896,12 @@ body.platform-darwin .tab-placeholder {
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   max-width: 210px;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border-radius: 4px 4px 0 0;
   color: #4d6780;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
   border: 1px solid transparent;
@@ -896,18 +935,18 @@ body.platform-darwin .tab-placeholder {
 .transfer-menu {
   position: relative;
   flex: 0 0 auto;
-  align-self: center;
-  margin: 0 10px 8px 8px;
+  align-self: flex-end;
+  margin: 0 6px 4px;
   -webkit-app-region: no-drag;
   z-index: 40;
 }
 
 .transfer-menu-btn {
   position: relative;
-  width: 34px;
-  height: 30px;
+  width: 36px;
+  height: 34px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: #3f5a72;
   display: inline-flex;
@@ -1346,7 +1385,7 @@ body.platform-darwin .tab-placeholder {
   width: 100%;
   height: 100%;
   min-height: 0;
-  padding: 4px 6px;
+  padding: 4px 6px 28px;
   background: var(--term-bg);
 }
 
@@ -1356,6 +1395,8 @@ body.platform-darwin .tab-placeholder {
 .cmd-bar-wrap {
   position: relative;
   flex: 0 0 auto;
+  margin-top: 6px;
+  border-top: 1px solid #0a2a33;
 }
 
 .cmd-history-popup {
@@ -1440,6 +1481,37 @@ body.platform-darwin .tab-placeholder {
 }
 
 .split-bar:hover { background: #b7c7d8; }
+
+.files-restore-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 32px;
+  cursor: row-resize;
+  background: linear-gradient(180deg, #e8eef5 0%, #d9e3ee 100%);
+  border-top: 1px solid #b8c6d6;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.files-restore-btn {
+  height: 24px;
+  padding: 0 14px;
+  border: 1px solid #9eb6cb;
+  border-radius: 4px;
+  background: #f7fafc;
+  color: #1f5f9a;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.files-restore-btn:hover {
+  background: #e5f0fb;
+  border-color: #6f9ec8;
+}
 
 .files-pane {
   flex: 1;
@@ -2239,7 +2311,9 @@ body.platform-darwin .tab-placeholder {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #0b0d10;
+  /* 底部留浅色空隙；右侧由 .main-stage 统一留白 */
+  padding: 0 0 10px;
+  background: #e8ecf1;
   outline: none;
 }
 

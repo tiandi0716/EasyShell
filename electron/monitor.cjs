@@ -126,7 +126,7 @@ function parseMonitor(raw, prev) {
 
   const netHistory = [...(prev?.netHistory || [])]
   netHistory.push({ t: now, rxRate, txRate })
-  while (netHistory.length > 40) netHistory.shift()
+  while (netHistory.length > 60) netHistory.shift()
 
   return {
     uptimeText,
@@ -150,17 +150,17 @@ function parseMonitor(raw, prev) {
 }
 
 const MONITOR_SCRIPT = [
-  'echo ===UPTIME===',
+  "echo '===UPTIME==='",
   'uptime',
-  'echo ===MEM===',
+  "echo '===MEM==='",
   'free -b',
-  'echo ===CPU===',
+  "echo '===CPU==='",
   "grep '^cpu ' /proc/stat",
-  'echo ===PS===',
+  "echo '===PS==='",
   'ps -eo pid,pcpu,pmem,rss,comm --sort=-pmem 2>/dev/null | head -16',
-  'echo ===DF===',
+  "echo '===DF==='",
   'df -B1 -P 2>/dev/null',
-  'echo ===NET===',
+  "echo '===NET==='",
   'cat /proc/net/dev',
 ].join('; ')
 

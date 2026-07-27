@@ -41,30 +41,155 @@ function Meter({
   )
 }
 
-function NetChart({ history }: { history: MonitorData['netHistory'] }) {
-  const w = 220
+function ProcUsage({
+  value,
+  text,
+  kind,
+}: {
+  value: number
+  text: string
+  kind: 'mem' | 'cpu'
+}) {
+  const pctVal = Math.max(0, Math.min(100, value))
+  return (
+    <span className={`proc-usage kind-${kind}`} title={text}>
+      <i className="proc-usage-bar" style={{ width: `${pctVal}%` }} />
+      <em>{text}</em>
+    </span>
+  )
+}
+
+const NET_CHART_W = 200
+const NET_BAR_W = 2.4
+const NET_BAR_GAP = 0.8
+const NET_STEP = NET_BAR_W + NET_BAR_GAP
+const NET_MAX_POINTS = Math.max(1, Math.floor(NET_CHART_W / NET_STEP))
+
+function takeNetSamples(history: MonitorData['netHistory']) {
+  const samples = history.slice(-NET_MAX_POINTS)
+  const startX = Math.max(0, NET_CHART_W - samples.length * NET_STEP)
+  return { samples, startX }
+}
+
+function NetLineChart({ history }: { history: MonitorData['netHistory'] }) {
+  const w = NET_CHART_W
   const h = 56
   const max = Math.max(1, ...history.map((p) => Math.max(p.rxRate, p.txRate)))
-  const toPoints = (key: 'rxRate' | 'txRate') =>
-    history
+  const { samples, startX } = takeNetSamples(history)
+  const toPoints = (key: 'rxRate' | 'txRate') => {
+    if (!samples.length) return ''
+    return samples
       .map((p, i) => {
-        const x = history.length <= 1 ? 0 : (i / (history.length - 1)) * (w - 2)
+        // 与柱状图同一套步进：新点从右侧进入，整体往左走
+        const x = startX + i * NET_STEP + NET_BAR_W / 2
         const y = h - 2 - (p[key] / max) * (h - 6)
         return `${x},${y}`
       })
       .join(' ')
+  }
 
   return (
-    <svg className="net-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+    <svg className="net-line-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <polyline fill="none" stroke="#22a06b" strokeWidth="1.6" points={toPoints('rxRate')} />
       <polyline fill="none" stroke="#e24c4c" strokeWidth="1.6" points={toPoints('txRate')} />
     </svg>
   )
 }
 
+function NetBarChart({ history }: { history: MonitorData['netHistory'] }) {
+  const w = NET_CHART_W
+  const h = 70
+  const max = Math.max(1, ...history.map((p) => Math.max(p.rxRate, p.txRate)))
+  const { samples, startX } = takeNetSamples(history)
+  const ticks = [
+    { ratio: 1, label: formatAxisRate(max) },
+    { ratio: 2 / 3, label: formatAxisRate(max * (2 / 3)) },
+    { ratio: 1 / 3, label: formatAxisRate(max / 3) },
+  ]
+
+  return (
+    <div className="net-chart-wrap">
+      <div className="net-chart-y">
+        {ticks.map((t) => (
+          <span key={t.ratio}>{t.label}</span>
+        ))}
+      </div>
+      <div className="net-chart-plot">
+        <svg className="net-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+          {ticks.map((t) => {
+            const y = h * (1 - t.ratio)
+            return (
+              <line
+                key={t.ratio}
+                x1="0"
+                y1={y}
+                x2={w}
+                y2={y}
+                stroke="#c5d0db"
+                strokeWidth="1"
+                strokeDasharray="2 3"
+              />
+            )
+          })}
+          {samples.map((p, i) => {
+            const x = startX + i * NET_STEP
+            const rxH = (p.rxRate / max) * (h - 2)
+            const txH = (p.txRate / max) * (h - 2)
+            const baseY = h - 1
+            return (
+              <g key={`${p.t}-${i}`}>
+                <rect
+                  x={x}
+                  y={baseY - Math.max(rxH, txH)}
+                  width={NET_BAR_W}
+                  height={Math.max(rxH, txH, 0)}
+                  fill="#e8dcc8"
+                  opacity="0.5"
+                />
+                {rxH > 0 ? (
+                  <rect x={x} y={baseY - rxH} width={NET_BAR_W} height={rxH} fill="#7dcea0" />
+                ) : null}
+                {txH > 0 ? (
+                  <rect
+                    x={x}
+                    y={baseY - txH}
+                    width={NET_BAR_W}
+                    height={txH}
+                    fill="#f0a6a0"
+                    opacity="0.92"
+                  />
+                ) : null}
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+function formatAxisRate(bps: number) {
+  if (!bps) return '0'
+  if (bps < 1024) return `${bps.toFixed(0)}`
+  if (bps < 1024 ** 2) return `${(bps / 1024).toFixed(1)}K`
+  return `${(bps / 1024 ** 2).toFixed(1)}M`
+}
+
 function sortMark(active: boolean, dir: ProcSortDir) {
   if (!active) return ''
   return dir === 'desc' ? ' ↓' : ' ↑'
+}
+
+function localizeUptime(text: string) {
+  return text
+    .replace(/\bdays?\b/gi, '天')
+    .replace(/\bhours?\b/gi, '小时')
+    .replace(/\bhrs?\b/gi, '小时')
+    .replace(/\bminutes?\b/gi, '分钟')
+    .replace(/\bmins?\b/gi, '分钟')
+    .replace(/\bmin\b/gi, '分钟')
+    .replace(/\bseconds?\b/gi, '秒')
+    .replace(/\bsecs?\b/gi, '秒')
 }
 
 function formatDuration(ms: number) {
@@ -142,7 +267,7 @@ export default function MonitorPanel({
       }
     }
     void tick()
-    const timer = window.setInterval(() => void tick(), 1500)
+    const timer = window.setInterval(() => void tick(), 1280)
     return () => {
       alive = false
       window.clearInterval(timer)
@@ -171,7 +296,7 @@ export default function MonitorPanel({
       }
     }
     void tick()
-    const timer = window.setInterval(() => void tick(), 2000)
+    const timer = window.setInterval(() => void tick(), 1280)
     return () => {
       alive = false
       window.clearInterval(timer)
@@ -234,7 +359,7 @@ export default function MonitorPanel({
     <div className="monitor">
       <section className="monitor-block">
         <h4>系统信息</h4>
-        <div className="info-line">运行时间：{data.uptimeText || '-'}</div>
+        <div className="info-line">运行时间：{localizeUptime(data.uptimeText || '-')}</div>
         <div className="info-line">
           系统负载：{data.load.map((n) => n.toFixed(2)).join(' / ')}
         </div>
@@ -281,24 +406,36 @@ export default function MonitorPanel({
             </button>
             <span>命令</span>
           </div>
-          {processes.map((p) => (
-            <div className="proc-row" key={`${p.pid}-${p.command}`}>
-              <span title={`PID ${p.pid}`}>{p.pid}</span>
-              <span>{formatBytes(p.rss * 1024)}</span>
-              <span>{p.cpu.toFixed(1)}%</span>
-              <span title={p.command}>{p.command}</span>
-            </div>
-          ))}
+          {processes.map((p) => {
+            const memPct = Math.max(
+              0,
+              Math.min(100, data.memTotal > 0 ? (p.rss * 1024 / data.memTotal) * 100 : p.mem),
+            )
+            const cpuPct = Math.max(0, Math.min(100, p.cpu))
+            return (
+              <div className="proc-row" key={`${p.pid}-${p.command}`}>
+                <span title={`PID ${p.pid}`}>{p.pid}</span>
+                <ProcUsage
+                  kind="mem"
+                  value={memPct}
+                  text={formatBytes(p.rss * 1024)}
+                />
+                <ProcUsage kind="cpu" value={cpuPct} text={`${p.cpu.toFixed(1)}%`} />
+                <span title={p.command}>{p.command}</span>
+              </div>
+            )
+          })}
         </div>
       </section>
 
       <section className="monitor-block">
         <h4>网络</h4>
         <div className="net-meta">
-          <span>↓ {formatRate(data.rxRate)}</span>
-          <span>↑ {formatRate(data.txRate)}</span>
+          <span className="net-down">↓ {formatRate(data.rxRate)}</span>
+          <span className="net-up">↑ {formatRate(data.txRate)}</span>
         </div>
-        <NetChart history={data.netHistory} />
+        <NetLineChart history={data.netHistory} />
+        <NetBarChart history={data.netHistory} />
       </section>
 
       <section className="monitor-block">

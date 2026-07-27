@@ -201,16 +201,15 @@ body.platform-linux .conn-panel-head {
 
 body.platform-win32 .conn-toolbar,
 body.platform-linux .conn-toolbar {
-  gap: 6px;
+  gap: 8px;
 }
 
 .conn-panel {
   border-bottom: 1px solid var(--border);
-  flex: 1.15;
+  flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 220px;
-  max-height: none;
+  min-height: 0;
   background: #f2f5f8;
 }
 
@@ -218,7 +217,7 @@ body.platform-linux .conn-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 12px 12px 10px;
   color: #35506b;
 }
 
@@ -233,15 +232,20 @@ body.platform-linux .conn-toolbar {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 0 8px 8px;
+  padding: 10px 12px 12px;
   overflow: hidden;
 }
 
 .conn-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 8px;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.conn-toolbar .btn {
+  min-height: 30px;
+  padding: 6px 10px;
 }
 
 .conn-search {
@@ -537,8 +541,8 @@ body.platform-linux .conn-toolbar {
 }
 
 .monitor-wrap {
-  flex: 0.85;
-  min-height: 180px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: #f7f8fa;
@@ -747,6 +751,68 @@ body.platform-linux .conn-toolbar {
   min-width: 0;
   min-height: 0;
   background: #e8ecf1;
+  position: relative;
+}
+
+.main-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.conn-manager-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 34px;
+  height: 30px;
+  margin: 0 10px 8px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #2f6fbf;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.conn-manager-btn:hover,
+.conn-manager-btn.active {
+  background: #d5e4f4;
+  border-color: #b7cce3;
+  color: #1a5aa0;
+}
+
+.conn-manager-float {
+  position: absolute;
+  z-index: 45;
+  top: 8px;
+  left: 8px;
+  width: min(340px, calc(100% - 16px));
+  height: min(560px, calc(100% - 16px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #c5d3e2;
+  box-shadow: 0 12px 32px rgba(20, 40, 70, 0.2);
+  background: #f2f5f8;
+}
+
+.conn-manager-float .conn-panel {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  border-bottom: none;
+  background: #f2f5f8;
+}
+
+.conn-manager-float .conn-panel-head {
+  background: #e8eef5;
+  border-bottom: 1px solid #d5e0ea;
 }
 
 .tabbar {
@@ -755,7 +821,7 @@ body.platform-linux .conn-toolbar {
   align-items: flex-end;
   align-content: flex-end;
   gap: 2px;
-  padding: 8px 8px 0;
+  padding: 8px 12px 0;
   min-height: 40px;
   max-height: 148px;
   border-bottom: 1px solid var(--border);
@@ -765,7 +831,7 @@ body.platform-linux .conn-toolbar {
 }
 
 body.platform-darwin .tabbar {
-  padding: 36px 8px 0;
+  padding: 36px 12px 0;
   min-height: 68px;
   /* macOS 隐藏标题栏：空白处可拖动窗口 */
   -webkit-app-region: drag;
@@ -831,17 +897,17 @@ body.platform-darwin .tab-placeholder {
   position: relative;
   flex: 0 0 auto;
   align-self: center;
-  margin: 0 4px 6px 0;
+  margin: 0 10px 8px 8px;
   -webkit-app-region: no-drag;
   z-index: 40;
 }
 
 .transfer-menu-btn {
   position: relative;
-  width: 30px;
-  height: 28px;
+  width: 34px;
+  height: 30px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: #3f5a72;
   display: inline-flex;
@@ -852,8 +918,8 @@ body.platform-darwin .tab-placeholder {
 
 .transfer-menu-btn:hover,
 .transfer-menu-btn.active {
-  background: #cfd9e4;
-  border-color: #b7c5d4;
+  background: #d5e4f4;
+  border-color: #b7cce3;
   color: #1f4060;
 }
 

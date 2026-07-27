@@ -81,6 +81,8 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   )
+  /** FinalShell 风格：连接管理从标签栏左侧按钮展开（默认不弹出） */
+  const [showConnManager, setShowConnManager] = useState(false)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [tabMenu, setTabMenu] = useState<{ tab: SessionTab; x: number; y: number } | null>(null)
   const [cwdBySession, setCwdBySession] = useState<Record<string, CwdJump>>({})
@@ -306,6 +308,7 @@ export default function App() {
     // RDP 需立刻切到全宽测量舞台，再读尺寸；SSH 普通异步更新即可
     if (isRdp) flushSync(applyConnecting)
     else applyConnecting()
+    setShowConnManager(false)
 
     try {
       if (isRdp) {
@@ -668,48 +671,6 @@ export default function App() {
             </div>
           </div>
 
-        <div className="conn-panel">
-          <div className="conn-panel-head">
-            <strong>连接管理</strong>
-          </div>
-          <ConnectionTree
-            connections={connections}
-            folders={folders}
-            activeConnectionId={activeTab?.connectionId}
-            onConnect={(c) => void connectTo(c)}
-            onConnectFolder={(folder) => {
-              const count = connections.filter((c) => (c.folder || '') === folder).length
-              if (!count) {
-                setDialog({
-                  type: 'alert',
-                  title: '提示',
-                  message: `目录「${folder}」下没有连接`,
-                })
-                return
-              }
-              setDialog({ type: 'connectFolder', folder, count })
-            }}
-            onCreateSsh={(folder) => openCreateSsh(folder, 'ssh')}
-            onCreateFolder={() => setDialog({ type: 'createFolder' })}
-            onEdit={(c) => {
-              setCreateConnType((c.connType || 'ssh') as 'ssh' | 'rdp')
-              setEditing(c)
-              setShowForm(true)
-            }}
-            onRenameConn={(c) => setDialog({ type: 'renameConn', conn: c })}
-            onDuplicate={(c) => void handleDuplicate(c)}
-            onCopyAddress={(c) => void handleCopyAddress(c)}
-            onCopySshCommand={(c) => void handleCopySshCommand(c)}
-            onMove={(c) => setDialog({ type: 'moveConn', conn: c })}
-            onDelete={(c) => setDialog({ type: 'deleteConn', conn: c })}
-            onRenameFolder={(folder) => setDialog({ type: 'renameFolder', folder })}
-            onDeleteFolder={(folder) => setDialog({ type: 'deleteFolder', folder })}
-            onExport={(options) => void handleExportBackup(options)}
-            onImportBackup={() => void handleImportBackup()}
-            onConvertFinalShell={() => void handleConvertFinalShell()}
-          />
-        </div>
-
         <div className="monitor-wrap">
           <div className="monitor-title">系统监控</div>
           <MonitorPanel
@@ -739,6 +700,29 @@ export default function App() {
 
       <section className="main">
         <div className="tabbar">
+          <button
+            type="button"
+            className={`conn-manager-btn ${showConnManager ? 'active' : ''}`}
+            title={showConnManager ? '收起连接管理' : '打开连接管理'}
+            aria-label="连接管理"
+            aria-expanded={showConnManager}
+            onClick={() => setShowConnManager((v) => !v)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M4 7.2A2.2 2.2 0 0 1 6.2 5h4.1l1.4 1.6H17.8A2.2 2.2 0 0 1 20 8.8v7A2.2 2.2 0 0 1 17.8 18H6.2A2.2 2.2 0 0 1 4 15.8V7.2Z"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M9.2 12.8h5.6M12 10v5.6"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
           {sidebarCollapsed ? (
             <button
               type="button"
@@ -794,6 +778,61 @@ export default function App() {
         </div>
 
         {activeTab?.error ? <div className="error-banner">{activeTab.error}</div> : null}
+
+        <div className="main-stage">
+          {showConnManager ? (
+            <div className="conn-manager-float">
+              <div className="conn-panel">
+                <div className="conn-panel-head">
+                  <strong>连接管理</strong>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    title="关闭"
+                    onClick={() => setShowConnManager(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <ConnectionTree
+                  connections={connections}
+                  folders={folders}
+                  activeConnectionId={activeTab?.connectionId}
+                  onConnect={(c) => void connectTo(c)}
+                  onConnectFolder={(folder) => {
+                    const count = connections.filter((c) => (c.folder || '') === folder).length
+                    if (!count) {
+                      setDialog({
+                        type: 'alert',
+                        title: '提示',
+                        message: `目录「${folder}」下没有连接`,
+                      })
+                      return
+                    }
+                    setDialog({ type: 'connectFolder', folder, count })
+                  }}
+                  onCreateSsh={(folder) => openCreateSsh(folder, 'ssh')}
+                  onCreateFolder={() => setDialog({ type: 'createFolder' })}
+                  onEdit={(c) => {
+                    setCreateConnType((c.connType || 'ssh') as 'ssh' | 'rdp')
+                    setEditing(c)
+                    setShowForm(true)
+                  }}
+                  onRenameConn={(c) => setDialog({ type: 'renameConn', conn: c })}
+                  onDuplicate={(c) => void handleDuplicate(c)}
+                  onCopyAddress={(c) => void handleCopyAddress(c)}
+                  onCopySshCommand={(c) => void handleCopySshCommand(c)}
+                  onMove={(c) => setDialog({ type: 'moveConn', conn: c })}
+                  onDelete={(c) => setDialog({ type: 'deleteConn', conn: c })}
+                  onRenameFolder={(folder) => setDialog({ type: 'renameFolder', folder })}
+                  onDeleteFolder={(folder) => setDialog({ type: 'deleteFolder', folder })}
+                  onExport={(options) => void handleExportBackup(options)}
+                  onImportBackup={() => void handleImportBackup()}
+                  onConvertFinalShell={() => void handleConvertFinalShell()}
+                />
+              </div>
+            </div>
+          ) : null}
 
         <div className="split-workspace">
           <div className="terminal-pane" style={{ flex: isRdpLayout ? 1 : 1 - filesRatio }}>
@@ -886,6 +925,7 @@ export default function App() {
               )}
             </div>
           ) : null}
+        </div>
         </div>
       </section>
 

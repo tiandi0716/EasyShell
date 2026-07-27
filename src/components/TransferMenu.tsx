@@ -5,17 +5,22 @@ import { formatBytes } from '../utils/format'
 
 function TransferIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M4 6.5h8M4 9.5h5.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
-        d="M11.2 8.2l1.8 1.8 1.8-1.8"
-        fill="none"
+        d="M8.2 15.8V8.4m0 0L6 10.5M8.2 8.4l2.2 2.1"
         stroke="currentColor"
-        strokeWidth="1.2"
+        strokeWidth="1.7"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+      <path
+        d="M15.8 8.2v7.4m0 0 2.2-2.1M15.8 15.6 13.6 13.5"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   )
 }
@@ -36,13 +41,15 @@ export default function TransferMenu() {
     const offUpdate = window.easyshell.onTransferUpdate((item) => {
       setItems((prev) => {
         const idx = prev.findIndex((x) => x.id === item.id)
-        if (idx === -1) return [item, ...prev]
+        if (idx === -1) {
+          // 仅新任务自动打开面板
+          if (item.status === 'active') setOpen(true)
+          return [item, ...prev]
+        }
         const next = prev.slice()
         next[idx] = item
         return next
       })
-      // 有新任务时自动打开，方便看到进度
-      if (item.status === 'active') setOpen(true)
     })
     const offRemove = window.easyshell.onTransferRemove(({ id }) => {
       setItems((prev) => prev.filter((x) => x.id !== id))

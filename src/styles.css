@@ -987,9 +987,22 @@ body.platform-darwin .tab-placeholder {
 }
 
 .tab .tab-label {
+  display: inline-flex;
+  align-items: center;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+.tab .tab-index {
+  flex: 0 0 auto;
+  margin-right: 8px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.tab.active .tab-index {
+  opacity: 0.9;
 }
 
 .tab.active {

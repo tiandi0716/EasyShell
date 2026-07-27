@@ -839,7 +839,8 @@ export default function App() {
                   }`}
                 />
                 <span className="tab-label">
-                  {index + 1} {tab.title}
+                  <span className="tab-index">{index + 1}</span>
+                  {tab.title}
                 </span>
                 <span
                   className="close"

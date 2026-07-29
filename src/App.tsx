@@ -53,7 +53,6 @@ type DialogState =
   | { type: 'renameConn'; conn: ConnectionConfig }
   | { type: 'deleteConn'; conn: ConnectionConfig }
   | { type: 'moveConn'; conn: ConnectionConfig }
-  | { type: 'connectFolder'; folder: string; count: number }
   | { type: 'alert'; title: string; message: string }
   | null
 
@@ -150,6 +149,30 @@ export default function App() {
   useEffect(() => {
     void loadConnections()
   }, [loadConnections])
+
+  useEffect(() => {
+    if (!showConnManager) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowConnManager(false)
+    }
+    const onPointerDown = (e: MouseEvent) => {
+      const el = e.target as Element | null
+      if (!el || typeof el.closest !== 'function') return
+      // 点在连接管理面板、打开按钮、右键菜单、弹窗上时不关
+      if (el.closest('.conn-manager-float')) return
+      if (el.closest('.conn-manager-btn')) return
+      if (el.closest('.ctx-menu')) return
+      if (el.closest('.modal-mask')) return
+      if (el.closest('.modal')) return
+      setShowConnManager(false)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onPointerDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mousedown', onPointerDown, true)
+    }
+  }, [showConnManager])
 
   // 启动时恢复已保存的界面字体大小
   useEffect(() => {
@@ -426,8 +449,9 @@ export default function App() {
     await connectTo(conn)
   }
 
-  async function runConnectFolder(folder: string) {
-    const list = connections.filter((c) => (c.folder || '') === folder)
+  async function runConnectFolders(folderList: string[]) {
+    const set = new Set(folderList)
+    const list = connections.filter((c) => set.has(c.folder || ''))
     await Promise.all(list.map((conn) => connectTo(conn)))
   }
 
@@ -789,7 +813,16 @@ export default function App() {
       ) : null}
 
       <section className="main">
-        <div className="tabbar">
+        <div
+          className={`tabbar${showConnManager ? ' conn-manager-open' : ''}`}
+          onMouseDown={(e) => {
+            if (!showConnManager) return
+            const t = e.target as Element
+            // 文件夹按钮自己负责开关，这里不要抢
+            if (t.closest?.('.conn-manager-btn')) return
+            setShowConnManager(false)
+          }}
+        >
           <button
             type="button"
             className={`conn-manager-btn ${showConnManager ? 'active' : ''}`}
@@ -883,24 +916,29 @@ export default function App() {
 
         <div className="main-stage">
           {showConnManager ? (
-            <div className="conn-manager-float">
+            <div className="conn-manager-float" role="dialog" aria-label="连接管理">
               <div className="conn-panel">
                 <ConnectionTree
                   connections={connections}
                   folders={folders}
                   activeConnectionId={activeTab?.connectionId}
                   onConnect={(c) => void connectTo(c)}
-                  onConnectFolder={(folder) => {
-                    const count = connections.filter((c) => (c.folder || '') === folder).length
+                  onConnectFolders={(folderList) => {
+                    const set = new Set(folderList)
+                    const count = connections.filter((c) => set.has(c.folder || '')).length
                     if (!count) {
+                      const label =
+                        folderList.length === 1
+                          ? `目录「${folderList[0]}」`
+                          : `选中的 ${folderList.length} 个目录`
                       setDialog({
                         type: 'alert',
                         title: '提示',
-                        message: `目录「${folder}」下没有连接`,
+                        message: `${label}下没有连接`,
                       })
                       return
                     }
-                    setDialog({ type: 'connectFolder', folder, count })
+                    void runConnectFolders(folderList)
                   }}
                   onCreateSsh={(folder) => openCreateSsh(folder, 'ssh')}
                   onCreateFolder={() => setDialog({ type: 'createFolder' })}
@@ -1159,20 +1197,6 @@ export default function App() {
             await window.easyshell.deleteConnection(dialog.conn.id)
             await loadConnections()
             setDialog(null)
-          }}
-        />
-      ) : null}
-
-      {dialog?.type === 'connectFolder' ? (
-        <ConfirmDialog
-          title="连接全部"
-          message={`连接「${dialog.folder}」下全部 ${dialog.count} 台主机？`}
-          confirmText="开始连接"
-          onClose={() => setDialog(null)}
-          onConfirm={async () => {
-            const folder = dialog.folder
-            setDialog(null)
-            await runConnectFolder(folder)
           }}
         />
       ) : null}

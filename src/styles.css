@@ -329,18 +329,38 @@ body.platform-linux .conn-toolbar {
   gap: 6px;
   padding: 8px 10px;
   min-height: 34px;
-  background: var(--bg-header);
+  background: #fff;
   color: #2d4a66;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.015em;
   text-align: left;
+  user-select: none;
 }
 
-.folder-head:hover { filter: brightness(0.98); }
+.folder-head:hover {
+  background: #f3f5f8;
+}
 .folder-head.selected {
-  background: #e5f1fb;
-  outline: 1px solid #b7d4ec;
+  background: #3aa0e8;
+  color: #fff;
+  outline: none;
+  box-shadow: inset 3px 0 0 #1f6fad;
+}
+.folder-head.selected .folder-arrow {
+  color: rgba(255, 255, 255, 0.85);
+}
+.folder-head.selected .folder-icon {
+  background: #fff;
+  box-shadow: none;
+}
+.folder-head.selected .folder-count {
+  color: #1f5f96;
+  background: rgba(255, 255, 255, 0.92);
+}
+.folder-head.selected:hover {
+  background: #4aabea;
+  filter: none;
 }
 
 .folder-arrow {
@@ -949,6 +969,12 @@ body.platform-darwin .tabbar {
   -webkit-app-region: drag;
 }
 
+/* 连接管理打开时：横幅可点击关闭（临时取消拖拽） */
+body.platform-darwin .tabbar.conn-manager-open,
+body.platform-darwin .tabbar.conn-manager-open .tabbar-spacer,
+body.platform-darwin .tabbar.conn-manager-open .tab-placeholder {
+  -webkit-app-region: no-drag;
+}
 
 .tabbar-spacer {
   flex: 1 1 auto;

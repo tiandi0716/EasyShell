@@ -1,35 +1,11 @@
 # EasyShell
 
-<p align="center">
-  <img src="docs/screenshots/icon.png" width="72" alt="EasyShell" />
-</p>
+轻量 **SSH / SFTP / Windows 远程桌面** 客户端（界面风格接近 FinalShell）
 
 <p align="center">
-  轻量 <b>SSH / SFTP / Windows 远程桌面</b> 客户端（界面风格接近 FinalShell）
+  <a href="https://github.com/tiandi0716/EasyShell/releases/latest"><img src="https://img.shields.io/github/v/release/tiandi0716/EasyShell?label=release" alt="release" /></a>
+  <a href="https://github.com/tiandi0716/EasyShell/releases"><img src="https://img.shields.io/github/downloads/tiandi0716/EasyShell/total?label=downloads" alt="downloads" /></a>
 </p>
-
-<p align="center">
-  <a href="https://github.com/tiandi0716/easyshell/releases/latest"><img src="https://img.shields.io/github/v/release/tiandi0716/easyshell?label=release" alt="release" /></a>
-  <a href="https://github.com/tiandi0716/easyshell/releases"><img src="https://img.shields.io/github/downloads/tiandi0716/easyshell/total?label=downloads" alt="downloads" /></a>
-</p>
-
-## 界面预览
-
-SSH 终端 + SFTP 文件管理 + 左侧系统监控：
-
-![SSH 工作区](docs/screenshots/ssh-workspace.png)
-
-Windows 远程桌面（应用内嵌）：
-
-![RDP 远程桌面](docs/screenshots/rdp-session.jpg)
-
-| 连接管理 | SFTP 文件面板 |
-| --- | --- |
-| ![连接管理](docs/screenshots/connections.png) | ![SFTP](docs/screenshots/sftp-files.png) |
-
-| SSH 系统监控 | RDP 会话信息 |
-| --- | --- |
-| ![系统监控](docs/screenshots/monitor.png) | ![RDP 会话](docs/screenshots/rdp-session-info.png) |
 
 ## 功能特性
 
@@ -45,7 +21,7 @@ Windows 远程桌面（应用内嵌）：
 
 ## 下载安装
 
-请到 [Releases](https://github.com/tiandi0716/easyshell/releases/latest) 下载对应平台安装包：
+请到 [Releases](https://github.com/tiandi0716/EasyShell/releases/latest) 下载对应平台安装包：
 
 | 平台 | 文件 |
 |------|------|

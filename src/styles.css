@@ -2017,11 +2017,22 @@ body.platform-darwin .tab-placeholder {
 }
 
 .recent-row:hover:not(:disabled) {
-  background: var(--text);
+  background: var(--bg-hover);
 }
 
 .recent-row.selected {
-  background: var(--accent-soft);
+  background: var(--accent);
+  color: #0b1218;
+}
+
+.recent-row.selected:hover:not(:disabled) {
+  background: #4ad9ad;
+}
+
+.recent-row.selected .recent-icon,
+.recent-row.selected .recent-folder,
+.recent-row.selected .recent-user {
+  color: rgba(11, 18, 24, 0.78);
 }
 
 .recent-row.missing {

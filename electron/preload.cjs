@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('easyshell', {
   openRdpSession: (payload) => ipcRenderer.invoke('rdp:open', payload),
   closeRdpSession: (sessionId) => ipcRenderer.invoke('rdp:close', sessionId),
   getRdpMonitor: (sessionId) => ipcRenderer.invoke('rdp:monitor', sessionId),
+  getRdpFramebuffer: (sessionId) => ipcRenderer.invoke('rdp:framebuffer', sessionId),
   rdpPointer: (sessionId, x, y, button, isPressed) =>
     ipcRenderer.send('rdp:pointer', { sessionId, x, y, button, isPressed }),
   rdpWheel: (sessionId, x, y, step, isNegative, isHorizontal) =>

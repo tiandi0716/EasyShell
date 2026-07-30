@@ -105,6 +105,10 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   )
+  const dragTabIdRef = useRef<string | null>(null)
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null)
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null)
+  const resizingRdpRef = useRef<Set<string>>(new Set())
   const lastSidebarWidthRef = useRef(readSidebarWidth())
   /** FinalShell 风格：连接管理从标签栏左侧按钮展开（默认不弹出） */
   const [showConnManager, setShowConnManager] = useState(false)
@@ -224,15 +228,24 @@ export default function App() {
   useEffect(() => {
     const offClose = window.easyshell.onRdpClose(({ sessionId }) => {
       setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === sessionId ? { ...tab, status: 'closed', error: '远程桌面已断开' } : tab,
-        ),
+        prev.map((tab) => {
+          if (tab.id !== sessionId) return tab
+          // 已有更具体的错误文案时保留，避免被「已断开」盖掉
+          if (tab.status === 'error' && tab.error) return { ...tab, status: 'closed' }
+          return {
+            ...tab,
+            status: 'closed',
+            error: tab.error || '远程桌面已断开',
+          }
+        }),
       )
     })
     const offError = window.easyshell.onRdpError(({ sessionId, message }) => {
       setTabs((prev) =>
         prev.map((tab) =>
-          tab.id === sessionId ? { ...tab, status: 'error', error: message } : tab,
+          tab.id === sessionId
+            ? { ...tab, status: 'error', error: message || tab.error || '远程桌面连接失败' }
+            : tab,
         ),
       )
     })
@@ -369,9 +382,9 @@ export default function App() {
           (document.querySelector('.terminal-pane') as HTMLElement | null)
         const pw = Math.max(640, Math.floor(stage?.clientWidth || window.innerWidth * 0.7))
         const ph = Math.max(400, Math.floor(stage?.clientHeight || window.innerHeight * 0.75))
-        // 偶数尺寸，贴近舞台像素，几乎铺满
-        const width = Math.max(640, pw - (pw % 2))
-        const height = Math.max(400, ph - (ph % 2))
+        // 对齐到 8 像素，减少 Windows 远程桌面布局错位/裁切
+        const width = Math.max(640, pw - (pw % 8))
+        const height = Math.max(400, ph - (ph % 8))
         const { sessionId, screen } = await window.easyshell.openRdpSession({
           config: { ...conn, width, height },
         })
@@ -433,6 +446,62 @@ export default function App() {
       await window.easyshell.closeSession(tab.id)
     }
     await connectTo(conn, tab.id)
+  }
+
+  /** 窗口尺寸变化后，按新舞台分辨率重建 RDP，避免黑边/发糊 */
+  async function resizeRdpSession(
+    oldSessionId: string,
+    connectionId: string | undefined,
+    width: number,
+    height: number,
+  ) {
+    if (!connectionId) return
+    if (resizingRdpRef.current.has(oldSessionId)) return
+    const conn = connections.find((c) => c.id === connectionId)
+    if (!conn) return
+
+    resizingRdpRef.current.add(oldSessionId)
+    try {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === oldSessionId
+            ? { ...tab, status: 'connecting', error: undefined }
+            : tab,
+        ),
+      )
+      try {
+        await window.easyshell.closeRdpSession(oldSessionId)
+      } catch {
+        await window.easyshell.closeSession(oldSessionId)
+      }
+      const { sessionId, screen } = await window.easyshell.openRdpSession({
+        config: { ...conn, width, height },
+      })
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === oldSessionId
+            ? {
+                ...tab,
+                id: sessionId,
+                kind: 'rdp',
+                status: 'ready',
+                error: undefined,
+                screen,
+              }
+            : tab,
+        ),
+      )
+      setActiveTabId((cur) => (cur === oldSessionId ? sessionId : cur))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === oldSessionId ? { ...tab, status: 'error', error: message } : tab,
+        ),
+      )
+    } finally {
+      resizingRdpRef.current.delete(oldSessionId)
+    }
   }
 
   async function reconnectAllTabs() {
@@ -566,6 +635,19 @@ export default function App() {
         if (current !== id) return current
         return next[idx]?.id ?? next[idx - 1]?.id ?? null
       })
+      return next
+    })
+  }
+
+  function reorderTabs(fromId: string, toId: string) {
+    if (!fromId || !toId || fromId === toId) return
+    setTabs((prev) => {
+      const from = prev.findIndex((t) => t.id === fromId)
+      const to = prev.findIndex((t) => t.id === toId)
+      if (from < 0 || to < 0 || from === to) return prev
+      const next = [...prev]
+      const [item] = next.splice(from, 1)
+      next.splice(to, 0, item)
       return next
     })
   }
@@ -855,7 +937,11 @@ export default function App() {
             tabs.map((tab, index) => (
               <button
                 key={tab.id}
-                className={`tab ${tab.id === activeTabId ? 'active' : ''}`}
+                type="button"
+                draggable
+                className={`tab ${tab.id === activeTabId ? 'active' : ''} ${
+                  draggingTabId === tab.id ? 'dragging' : ''
+                } ${dragOverTabId === tab.id && draggingTabId !== tab.id ? 'drag-over' : ''}`}
                 onClick={() => setActiveTabId(tab.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
@@ -863,7 +949,38 @@ export default function App() {
                   setActiveTabId(tab.id)
                   setTabMenu({ tab, x: e.clientX, y: e.clientY })
                 }}
-                title="右键打开标签菜单"
+                onDragStart={(e) => {
+                  dragTabIdRef.current = tab.id
+                  setDraggingTabId(tab.id)
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('text/plain', tab.id)
+                  // 避免拖到关闭按钮时误触
+                  const el = e.currentTarget
+                  el.classList.add('dragging')
+                }}
+                onDragEnd={() => {
+                  dragTabIdRef.current = null
+                  setDraggingTabId(null)
+                  setDragOverTabId(null)
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (dragOverTabId !== tab.id) setDragOverTabId(tab.id)
+                }}
+                onDragLeave={() => {
+                  setDragOverTabId((cur) => (cur === tab.id ? null : cur))
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const fromId =
+                    e.dataTransfer.getData('text/plain') || dragTabIdRef.current || ''
+                  reorderTabs(fromId, tab.id)
+                  setDraggingTabId(null)
+                  setDragOverTabId(null)
+                  dragTabIdRef.current = null
+                }}
+                title="拖动可调整顺序；右键打开标签菜单"
               >
                 <span
                   className={`status-dot ${
@@ -880,6 +997,10 @@ export default function App() {
                 </span>
                 <span
                   className="close"
+                  onMouseDown={(e) => {
+                    // 避免按下关闭时启动拖拽
+                    e.stopPropagation()
+                  }}
                   onClick={(e) => {
                     e.stopPropagation()
                     void closeTab(tab.id)
@@ -984,7 +1105,7 @@ export default function App() {
                   <div className="rdp-stage" />
                   <div className="rdp-connecting-overlay">
                     <h2>连接中…</h2>
-                    <p>正在建立 Windows 远程桌面会话</p>
+                    <p>正在适配窗口分辨率 / 建立远程桌面会话</p>
                   </div>
                 </div>
               ) : (
@@ -993,10 +1114,10 @@ export default function App() {
                   <p>正在建立 SSH 会话</p>
                 </div>
               )
-            ) : activeTab.status === 'error' ? (
+            ) : activeTab.status === 'error' || activeTab.status === 'closed' ? (
               <div className="empty">
-                <h2>连接失败</h2>
-                <p>{activeTab.error}</p>
+                <h2>{activeTab.status === 'closed' ? '远程桌面已断开' : '连接失败'}</h2>
+                <p>{activeTab.error || '请检查主机、账号密码后重试'}</p>
               </div>
             ) : (
               <>
@@ -1014,6 +1135,9 @@ export default function App() {
                             active={tab.id === activeTabId}
                             width={tab.screen?.width || 1280}
                             height={tab.screen?.height || 720}
+                            onRequestResize={(w, h) => {
+                              void resizeRdpSession(tab.id, tab.connectionId, w, h)
+                            }}
                           />
                         ) : (
                           <TerminalView
@@ -1026,7 +1150,7 @@ export default function App() {
                       </div>
                     ))}
                 </div>
-                {!isActiveRdp ? (
+                {!isRdpLayout ? (
                   <CommandBar
                     activeSessionId={
                       activeTab?.status === 'ready' && activeTab.kind !== 'rdp'

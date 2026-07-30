@@ -1100,6 +1100,14 @@ body.platform-darwin .tab-placeholder {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+.tab.dragging {
+  opacity: 0.45;
+}
+
+.tab.drag-over {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .tab .close {
   flex: 0 0 auto;
   opacity: 0.55;
@@ -2519,8 +2527,7 @@ body.platform-darwin .tab-placeholder {
 .rdp-view .rdp-canvas {
   display: block;
   flex: 0 0 auto;
-  width: 100%;
-  height: 100%;
+  /* 由 JS 设为舞台宽高，铺满显示区 */
   max-width: none;
   max-height: none;
   cursor: default;

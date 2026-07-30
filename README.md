@@ -7,6 +7,10 @@
   <a href="https://github.com/tiandi0716/EasyShell/releases"><img src="https://img.shields.io/github/downloads/tiandi0716/EasyShell/total?label=downloads" alt="downloads" /></a>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/ssh-overview.png" alt="EasyShell 主界面：SSH 终端、系统监控与文件管理" width="920" />
+</p>
+
 ## 功能特性
 
 - 主机连接管理（SSH 密码/私钥库、Windows RDP）

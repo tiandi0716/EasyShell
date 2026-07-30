@@ -327,18 +327,23 @@ ipcMain.handle('rdp:open', async (_e, { sessionId, config }) => {
     })
     session.on('bitmaps', (tiles) => {
       if (!mainWindow || mainWindow.isDestroyed() || !tiles?.length) return
-      // 用 postMessage + Transferable 避免整块像素再拷贝一份
-      const transfer = []
-      const packed = tiles.map((tile) => {
-        const data = tile.data
-        if (data instanceof ArrayBuffer) transfer.push(data)
-        return tile
-      })
-      try {
-        mainWindow.webContents.postMessage('rdp:bitmaps', { sessionId: id, tiles: packed }, transfer)
-      } catch {
-        mainWindow.webContents.send('rdp:bitmaps', { sessionId: id, tiles: packed })
-      }
+      // 转成 Buffer，IPC 更稳；多标签不要用 Transferable
+      const packed = tiles.map((tile) => ({
+        ...tile,
+        data: Buffer.isBuffer(tile.data)
+          ? tile.data
+          : Buffer.from(
+              tile.data instanceof ArrayBuffer
+                ? tile.data
+                : ArrayBuffer.isView(tile.data)
+                  ? tile.data.buffer.slice(
+                      tile.data.byteOffset,
+                      tile.data.byteOffset + tile.data.byteLength,
+                    )
+                  : tile.data || [],
+            ),
+      }))
+      mainWindow.webContents.send('rdp:bitmaps', { sessionId: id, tiles: packed })
     })
     session.on('error', (err) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -353,6 +358,10 @@ ipcMain.handle('rdp:open', async (_e, { sessionId, config }) => {
         mainWindow.webContents.send('rdp:closed', { sessionId: id })
       }
     })
+    // Node worker 桥接：等 worker 真正 accept 后再返回，便于把启动失败抛给 UI
+    if (typeof session.waitUntilOpened === 'function') {
+      await session.waitUntilOpened()
+    }
     return { sessionId: id, screen: session.screen }
   } catch (err) {
     rdpSessions.close(id)
@@ -365,6 +374,14 @@ ipcMain.handle('rdp:close', (_e, sessionId) => rdpSessions.close(sessionId))
 ipcMain.handle('rdp:monitor', (_e, sessionId) => {
   try {
     return rdpSessions.getMonitor(sessionId)
+  } catch (err) {
+    throw new Error(err.message || String(err))
+  }
+})
+
+ipcMain.handle('rdp:framebuffer', (_e, sessionId) => {
+  try {
+    return rdpSessions.getFramebuffer(sessionId)
   } catch (err) {
     throw new Error(err.message || String(err))
   }

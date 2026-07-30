@@ -1,7 +1,7 @@
 {
   "name": "easyshell",
   "productName": "EasyShell",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "轻量 SSH / SFTP 远程管理工具",
   "main": "electron/main.cjs",
   "author": "EasyShell",
@@ -56,6 +56,15 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "electron/rdp-session-worker.cjs",
+      "electron/rdp-manager.cjs",
+      "electron/rdp-node-bridge.cjs",
+      "electron/rdp-framebuffer.cjs",
+      "electron/find-node.cjs",
+      "node_modules/@electerm/rdpjs/**",
+      "node_modules/node-forge/**"
+    ],
     "mac": {
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",

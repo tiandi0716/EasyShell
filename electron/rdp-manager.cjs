@@ -1,5 +1,6 @@
 const { EventEmitter } = require('events')
 const { randomUUID } = require('crypto')
+const { allocFramebuffer, blitRgbaTile, snapshotFramebuffer } = require('./rdp-framebuffer.cjs')
 
 let rdpLib = null
 function getRdp() {
@@ -82,6 +83,23 @@ class RdpSession extends EventEmitter {
     this.bytesIn = 0
     this.lastFrameAt = 0
     this.fpsWindow = { t: Date.now(), frames: 0, fps: 0 }
+    this.fb = allocFramebuffer(this.screen.width, this.screen.height)
+  }
+
+  ensureFramebuffer() {
+    if (
+      !this.fb ||
+      this.fb.width !== this.screen.width ||
+      this.fb.height !== this.screen.height
+    ) {
+      this.fb = allocFramebuffer(this.screen.width, this.screen.height)
+    }
+    return this.fb
+  }
+
+  getFramebuffer() {
+    this.ensureFramebuffer()
+    return snapshotFramebuffer(this.fb)
   }
 
   enqueueBitmap(bitmap) {
@@ -102,6 +120,19 @@ class RdpSession extends EventEmitter {
     )
     if (!converted) return
 
+    const tile = {
+      destLeft: bitmap.destLeft,
+      destTop: bitmap.destTop,
+      destRight: bitmap.destLeft + converted.width - 1,
+      destBottom: bitmap.destTop + converted.height - 1,
+      width: converted.width,
+      height: converted.height,
+      data: converted.data,
+    }
+
+    // 主进程整帧缓存（切标签恢复用）
+    blitRgbaTile(this.ensureFramebuffer(), tile)
+
     this.tileCount += 1
     this.bytesIn += converted.data.byteLength || 0
     this.lastFrameAt = Date.now()
@@ -114,15 +145,7 @@ class RdpSession extends EventEmitter {
       win.t = this.lastFrameAt
     }
 
-    this.pendingTiles.push({
-      destLeft: bitmap.destLeft,
-      destTop: bitmap.destTop,
-      destRight: bitmap.destLeft + converted.width - 1,
-      destBottom: bitmap.destTop + converted.height - 1,
-      width: converted.width,
-      height: converted.height,
-      data: converted.data,
-    })
+    this.pendingTiles.push(tile)
 
     // 积压时立刻冲刷，绝不丢帧（丢帧就会留下永久黑块）
     if (this.pendingTiles.length >= 48) {
@@ -287,12 +310,31 @@ class RdpManager {
   open(sessionId, config) {
     const id = sessionId || randomUUID()
     this.close(id)
-    const session = new RdpSession(id, config)
+
+    // Electron 主进程走系统 Node worker，避开 BoringSSL KEY_USAGE 问题
+    const { needsExternalNode } = require('./find-node.cjs')
+    let session
+    if (needsExternalNode()) {
+      const { BridgedRdpSession } = require('./rdp-node-bridge.cjs')
+      session = new BridgedRdpSession(id, config)
+    } else {
+      session = new RdpSession(id, config)
+    }
+
     this.sessions.set(id, session)
     session.on('close', () => {
       if (this.sessions.get(id) === session) this.sessions.delete(id)
     })
-    session.connect()
+
+    const started = session.connect()
+    // Bridged 的 connect 是 async；失败时抛出并清理
+    if (started && typeof started.then === 'function') {
+      started.catch((err) => {
+        this.sessions.delete(id)
+        session.emit('error', err instanceof Error ? err : new Error(String(err)))
+        session.emit('close')
+      })
+    }
     return { sessionId: id, session }
   }
 
@@ -304,6 +346,15 @@ class RdpManager {
     const session = this.sessions.get(sessionId)
     if (!session) throw new Error('RDP 会话不存在')
     return session.getMonitor()
+  }
+
+  getFramebuffer(sessionId) {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error('RDP 会话不存在')
+    if (typeof session.getFramebuffer !== 'function') {
+      throw new Error('当前会话不支持整帧快照')
+    }
+    return session.getFramebuffer()
   }
 
   close(sessionId) {

@@ -203,6 +203,12 @@ export interface EasyShellApi {
   }) => Promise<{ sessionId: string; screen: { width: number; height: number } }>
   closeRdpSession: (sessionId: string) => Promise<boolean>
   getRdpMonitor: (sessionId: string) => Promise<RdpMonitorData>
+  /** 拉取主进程整帧 RGBA，用于切标签后恢复画面 */
+  getRdpFramebuffer: (sessionId: string) => Promise<{
+    width: number
+    height: number
+    data: ArrayBuffer | Uint8Array | { type: string; data: number[] }
+  } | null>
   rdpPointer: (
     sessionId: string,
     x: number,

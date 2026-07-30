@@ -559,10 +559,13 @@ export default function App() {
   async function closeTab(id: string) {
     await window.easyshell.closeSession(id)
     setTabs((prev) => {
+      const idx = prev.findIndex((tab) => tab.id === id)
       const next = prev.filter((tab) => tab.id !== id)
-      if (activeTabId === id) {
-        setActiveTabId(next.length ? next[next.length - 1].id : null)
-      }
+      // 关掉当前标签 → 切到右侧下一个；没有下一个则切左侧
+      setActiveTabId((current) => {
+        if (current !== id) return current
+        return next[idx]?.id ?? next[idx - 1]?.id ?? null
+      })
       return next
     })
   }

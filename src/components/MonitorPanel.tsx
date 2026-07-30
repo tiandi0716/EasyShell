@@ -90,8 +90,8 @@ function NetLineChart({ history }: { history: MonitorData['netHistory'] }) {
 
   return (
     <svg className="net-line-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <polyline fill="none" stroke="#22a06b" strokeWidth="1.6" points={toPoints('rxRate')} />
-      <polyline fill="none" stroke="#e24c4c" strokeWidth="1.6" points={toPoints('txRate')} />
+      <polyline fill="none" stroke="#3dcea0" strokeWidth="1.6" points={toPoints('rxRate')} />
+      <polyline fill="none" stroke="#f07178" strokeWidth="1.6" points={toPoints('txRate')} />
     </svg>
   )
 }
@@ -125,7 +125,7 @@ function NetBarChart({ history }: { history: MonitorData['netHistory'] }) {
                 y1={y}
                 x2={w}
                 y2={y}
-                stroke="#c5d0db"
+                stroke="#2c3848"
                 strokeWidth="1"
                 strokeDasharray="2 3"
               />
@@ -143,11 +143,11 @@ function NetBarChart({ history }: { history: MonitorData['netHistory'] }) {
                   y={baseY - Math.max(rxH, txH)}
                   width={NET_BAR_W}
                   height={Math.max(rxH, txH, 0)}
-                  fill="#e8dcc8"
-                  opacity="0.5"
+                  fill="#3d4a3a"
+                  opacity="0.55"
                 />
                 {rxH > 0 ? (
-                  <rect x={x} y={baseY - rxH} width={NET_BAR_W} height={rxH} fill="#7dcea0" />
+                  <rect x={x} y={baseY - rxH} width={NET_BAR_W} height={rxH} fill="#3dcea0" />
                 ) : null}
                 {txH > 0 ? (
                   <rect
@@ -155,7 +155,7 @@ function NetBarChart({ history }: { history: MonitorData['netHistory'] }) {
                     y={baseY - txH}
                     width={NET_BAR_W}
                     height={txH}
-                    fill="#f0a6a0"
+                    fill="#f07178"
                     opacity="0.92"
                   />
                 ) : null}

@@ -208,7 +208,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     title: 'EasyShell',
-    backgroundColor: '#eceff3',
+    backgroundColor: '#0f141c',
     // macOS：隐藏标题栏融入内容；Windows：原生标题栏，避免再留 Mac 交通灯空白
     ...(isMac
       ? {

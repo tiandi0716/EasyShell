@@ -821,7 +821,8 @@ body.platform-linux .conn-toolbar {
 
 .net-meta {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-dim);
@@ -830,35 +831,83 @@ body.platform-linux .conn-toolbar {
 
 .net-meta .net-down { color: var(--ok); font-weight: 600; }
 .net-meta .net-up { color: var(--danger); font-weight: 600; }
-
-.net-line-chart {
-  display: block;
-  width: 100%;
-  height: 56px;
-  margin-bottom: 6px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-soft);
-  border-radius: 2px;
+.net-meta .net-peak {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-weight: 500;
+  opacity: 0.9;
 }
 
 .net-chart-wrap {
   display: grid;
-  grid-template-columns: 36px 1fr;
-  gap: 6px;
+  grid-template-columns: 40px 1fr;
+  gap: 8px;
   width: 100%;
   min-height: 86px;
-  padding: 6px 6px 6px 4px;
+  padding: 6px 8px 6px 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-soft);
   border-radius: 2px;
 }
 
+.net-chart-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.net-chart-legend {
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 2px 2px 2px 0;
+}
+
+.net-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: var(--text-dim);
+}
+
+.net-leg i {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  flex: 0 0 auto;
+}
+
+.net-leg-down {
+  color: var(--ok);
+}
+.net-leg-down i {
+  background: var(--ok);
+  box-shadow: 0 0 0 1px rgba(61, 206, 160, 0.25);
+}
+
+.net-leg-up {
+  color: var(--danger);
+}
+.net-leg-up i {
+  background: var(--danger);
+  box-shadow: 0 0 0 1px rgba(240, 113, 120, 0.25);
+}
+
 .net-chart-y {
+  height: 70px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   align-items: flex-end;
-  padding: 4px 0 6px;
+  padding: 2px 2px 4px 0;
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--text-dim);
@@ -868,13 +917,24 @@ body.platform-linux .conn-toolbar {
 
 .net-chart-plot {
   min-width: 0;
-  height: 74px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.net-line-chart {
+  display: block;
+  width: 100%;
+  height: 56px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 
 .net-chart {
   display: block;
   width: 100%;
-  height: 100%;
+  height: 70px;
   background: transparent;
 }
 

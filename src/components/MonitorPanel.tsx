@@ -71,16 +71,21 @@ function takeNetSamples(history: MonitorData['netHistory']) {
   return { samples, startX }
 }
 
-function NetLineChart({ history }: { history: MonitorData['netHistory'] }) {
+function NetLineChart({
+  history,
+  max,
+}: {
+  history: MonitorData['netHistory']
+  max: number
+}) {
   const w = NET_CHART_W
   const h = 56
-  const max = Math.max(1, ...history.map((p) => Math.max(p.rxRate, p.txRate)))
   const { samples, startX } = takeNetSamples(history)
   const toPoints = (key: 'rxRate' | 'txRate') => {
     if (!samples.length) return ''
     return samples
       .map((p, i) => {
-        // 与柱状图同一套步进：新点从右侧进入，整体往左走
+        // 与柱状图同一套步进：柱中心对齐折线点
         const x = startX + i * NET_STEP + NET_BAR_W / 2
         const y = h - 2 - (p[key] / max) * (h - 6)
         return `${x},${y}`
@@ -96,11 +101,71 @@ function NetLineChart({ history }: { history: MonitorData['netHistory'] }) {
   )
 }
 
-function NetBarChart({ history }: { history: MonitorData['netHistory'] }) {
+function NetBarChart({
+  history,
+  max,
+}: {
+  history: MonitorData['netHistory']
+  max: number
+}) {
   const w = NET_CHART_W
   const h = 70
-  const max = Math.max(1, ...history.map((p) => Math.max(p.rxRate, p.txRate)))
   const { samples, startX } = takeNetSamples(history)
+
+  return (
+    <svg className="net-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      {[1, 2 / 3, 1 / 3].map((ratio) => {
+        const y = h * (1 - ratio)
+        return (
+          <line
+            key={ratio}
+            x1="0"
+            y1={y}
+            x2={w}
+            y2={y}
+            stroke="#2c3848"
+            strokeWidth="1"
+            strokeDasharray="2 3"
+          />
+        )
+      })}
+      {samples.map((p, i) => {
+        const x = startX + i * NET_STEP
+        const rxH = (p.rxRate / max) * (h - 2)
+        const txH = (p.txRate / max) * (h - 2)
+        const baseY = h - 1
+        return (
+          <g key={`${p.t}-${i}`}>
+            <rect
+              x={x}
+              y={baseY - Math.max(rxH, txH)}
+              width={NET_BAR_W}
+              height={Math.max(rxH, txH, 0)}
+              fill="#3d4a3a"
+              opacity="0.55"
+            />
+            {rxH > 0 ? (
+              <rect x={x} y={baseY - rxH} width={NET_BAR_W} height={rxH} fill="#3dcea0" />
+            ) : null}
+            {txH > 0 ? (
+              <rect
+                x={x}
+                y={baseY - txH}
+                width={NET_BAR_W}
+                height={txH}
+                fill="#f07178"
+                opacity="0.92"
+              />
+            ) : null}
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+function NetCharts({ history }: { history: MonitorData['netHistory'] }) {
+  const max = Math.max(1, ...history.map((p) => Math.max(p.rxRate, p.txRate)))
   const ticks = [
     { ratio: 1, label: formatAxisRate(max) },
     { ratio: 2 / 3, label: formatAxisRate(max * (2 / 3)) },
@@ -109,60 +174,26 @@ function NetBarChart({ history }: { history: MonitorData['netHistory'] }) {
 
   return (
     <div className="net-chart-wrap">
-      <div className="net-chart-y">
-        {ticks.map((t) => (
-          <span key={t.ratio}>{t.label}</span>
-        ))}
+      <div className="net-chart-side" aria-hidden>
+        <div className="net-chart-legend" title="绿：接收 · 红：发送">
+          <span className="net-leg net-leg-down">
+            <i />
+            接收
+          </span>
+          <span className="net-leg net-leg-up">
+            <i />
+            发送
+          </span>
+        </div>
+        <div className="net-chart-y">
+          {ticks.map((t) => (
+            <span key={t.ratio}>{t.label}</span>
+          ))}
+        </div>
       </div>
       <div className="net-chart-plot">
-        <svg className="net-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-          {ticks.map((t) => {
-            const y = h * (1 - t.ratio)
-            return (
-              <line
-                key={t.ratio}
-                x1="0"
-                y1={y}
-                x2={w}
-                y2={y}
-                stroke="#2c3848"
-                strokeWidth="1"
-                strokeDasharray="2 3"
-              />
-            )
-          })}
-          {samples.map((p, i) => {
-            const x = startX + i * NET_STEP
-            const rxH = (p.rxRate / max) * (h - 2)
-            const txH = (p.txRate / max) * (h - 2)
-            const baseY = h - 1
-            return (
-              <g key={`${p.t}-${i}`}>
-                <rect
-                  x={x}
-                  y={baseY - Math.max(rxH, txH)}
-                  width={NET_BAR_W}
-                  height={Math.max(rxH, txH, 0)}
-                  fill="#3d4a3a"
-                  opacity="0.55"
-                />
-                {rxH > 0 ? (
-                  <rect x={x} y={baseY - rxH} width={NET_BAR_W} height={rxH} fill="#3dcea0" />
-                ) : null}
-                {txH > 0 ? (
-                  <rect
-                    x={x}
-                    y={baseY - txH}
-                    width={NET_BAR_W}
-                    height={txH}
-                    fill="#f07178"
-                    opacity="0.92"
-                  />
-                ) : null}
-              </g>
-            )
-          })}
-        </svg>
+        <NetLineChart history={history} max={max} />
+        <NetBarChart history={history} max={max} />
       </div>
     </div>
   )
@@ -433,9 +464,11 @@ export default function MonitorPanel({
         <div className="net-meta">
           <span className="net-down">↓ {formatRate(data.rxRate)}</span>
           <span className="net-up">↑ {formatRate(data.txRate)}</span>
+          <span className="net-peak" title="近期采样峰值">
+            峰值 {formatAxisRate(Math.max(1, ...data.netHistory.map((p) => Math.max(p.rxRate, p.txRate))))}
+          </span>
         </div>
-        <NetLineChart history={data.netHistory} />
-        <NetBarChart history={data.netHistory} />
+        <NetCharts history={data.netHistory} />
       </section>
 
       <section className="monitor-block">

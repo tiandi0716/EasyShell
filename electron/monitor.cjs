@@ -26,6 +26,11 @@ function parseCpuLine(line) {
   return { idle, total }
 }
 
+/**
+ * 瞬时进程 CPU%（与 top/FinalShell 同类）：
+ * 100 * Δ(utime+stime) / (HZ * Δt)
+ * 多核可超过 100。
+ */
 function parseMonitor(raw, prev) {
   const sections = {}
   let current = ''
@@ -73,19 +78,44 @@ function parseMonitor(raw, prev) {
     if (totalDiff > 0) cpuPercent = Math.max(0, Math.min(100, (1 - idleDiff / totalDiff) * 100))
   }
 
-  const processes = []
-  for (const line of (sections.PS || []).slice(1)) {
+  const hz = Math.max(1, Number((sections.HZ || [])[0]) || prev?.hz || 100)
+  const now = Date.now()
+  const dtSec =
+    prev?.at && now > prev.at ? Math.max(0.05, (now - prev.at) / 1000) : 0
+  const prevTicks = prev?.procTicks || {}
+
+  const procTicks = {}
+  const processesRaw = []
+  for (const line of sections.PS || []) {
     const parts = line.trim().split(/\s+/)
-    if (parts.length < 5) continue
-    const [pid, pcpu, pmem, rss, ...cmdParts] = parts
-    processes.push({
-      pid,
-      cpu: Number(pcpu) || 0,
-      mem: Number(pmem) || 0,
-      rss: Number(rss) || 0,
-      command: cmdParts.join(' '),
-    })
+    if (parts.length < 4) continue
+    const pid = parts[0]
+    const ticks = Number(parts[1]) || 0
+    const rssKb = Number(parts[2]) || 0
+    const command = parts.slice(3).join(' ') || pid
+    if (!/^\d+$/.test(pid)) continue
+    procTicks[pid] = ticks
+
+    let cpu = 0
+    if (dtSec > 0 && prevTicks[pid] != null) {
+      const dTicks = Math.max(0, ticks - prevTicks[pid])
+      cpu = (dTicks / (hz * dtSec)) * 100
+    }
+    const rss = rssKb // KB，与原先 ps rss 字段一致
+    const mem = memTotal > 0 ? ((rss * 1024) / memTotal) * 100 : 0
+    processesRaw.push({ pid, cpu, mem, rss, command })
   }
+
+  // 按瞬时 CPU 降序，取前 20；若尚无差值则按内存
+  processesRaw.sort((a, b) => {
+    if (dtSec > 0) return b.cpu - a.cpu || b.rss - a.rss
+    return b.rss - a.rss
+  })
+  const processes = processesRaw.slice(0, 20).map((p) => ({
+    ...p,
+    cpu: Math.round(p.cpu * 10) / 10,
+    mem: Math.round(p.mem * 10) / 10,
+  }))
 
   const disks = []
   for (const line of (sections.DF || []).slice(1)) {
@@ -115,7 +145,6 @@ function parseMonitor(raw, prev) {
     tx += nums[8] || 0
   }
 
-  const now = Date.now()
   let rxRate = 0
   let txRate = 0
   if (prev?.net && prev.net.at) {
@@ -142,12 +171,37 @@ function parseMonitor(raw, prev) {
     txRate,
     netHistory,
     _prev: {
+      at: now,
+      hz,
       cpu: cpuNow,
+      procTicks,
       net: { rx, tx, at: now },
       netHistory,
     },
   }
 }
+
+// PS 行格式：pid ticks rss_kb comm
+// ticks = utime+stime，两次采样算瞬时 CPU%（可 >100，与 top/FinalShell 一致）
+// 整段用分号连接成一行，适配 ssh exec / bash -c
+const PS_COLLECT =
+  'for f in /proc/[0-9]*/stat; do ' +
+  '[ -r "$f" ] || continue; ' +
+  'line=$(cat "$f" 2>/dev/null) || continue; ' +
+  'pid=${line%% *}; ' +
+  'rest=${line#* (}; ' +
+  'comm=${rest%%) *}; ' +
+  'fields=${rest#*) }; ' +
+  'set -- $fields; ' +
+  'ticks=$(( ${12:-0} + ${13:-0} )); ' +
+  'rss=0; ' +
+  'if [ -r "/proc/$pid/status" ]; then ' +
+  'while read -r key val _; do ' +
+  '[ "$key" = "VmRSS:" ] && { rss=$val; break; }; ' +
+  'done < "/proc/$pid/status"; ' +
+  'fi; ' +
+  'echo "$pid $ticks $rss $comm"; ' +
+  'done'
 
 const MONITOR_SCRIPT = [
   "echo '===UPTIME==='",
@@ -156,8 +210,10 @@ const MONITOR_SCRIPT = [
   'free -b',
   "echo '===CPU==='",
   "grep '^cpu ' /proc/stat",
+  "echo '===HZ==='",
+  'getconf CLK_TCK 2>/dev/null || echo 100',
   "echo '===PS==='",
-  'ps -eo pid,pcpu,pmem,rss,comm --sort=-pmem 2>/dev/null | head -16',
+  PS_COLLECT,
   "echo '===DF==='",
   'df -B1 -P 2>/dev/null',
   "echo '===NET==='",

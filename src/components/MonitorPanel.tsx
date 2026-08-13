@@ -440,9 +440,10 @@ export default function MonitorPanel({
           {processes.map((p) => {
             const memPct = Math.max(
               0,
-              Math.min(100, data.memTotal > 0 ? (p.rss * 1024 / data.memTotal) * 100 : p.mem),
+              Math.min(100, data.memTotal > 0 ? ((p.rss * 1024) / data.memTotal) * 100 : p.mem),
             )
-            const cpuPct = Math.max(0, Math.min(100, p.cpu))
+            // 多核可超过 100；条形图封顶 100，数字按瞬时占用原样显示
+            const cpuBar = Math.max(0, Math.min(100, p.cpu))
             return (
               <div className="proc-row" key={`${p.pid}-${p.command}`}>
                 <span title={`PID ${p.pid}`}>{p.pid}</span>
@@ -451,7 +452,7 @@ export default function MonitorPanel({
                   value={memPct}
                   text={formatBytes(p.rss * 1024)}
                 />
-                <ProcUsage kind="cpu" value={cpuPct} text={`${p.cpu.toFixed(1)}%`} />
+                <ProcUsage kind="cpu" value={cpuBar} text={`${p.cpu.toFixed(1)}`} />
                 <span title={p.command}>{p.command}</span>
               </div>
             )

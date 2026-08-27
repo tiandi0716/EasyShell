@@ -102,7 +102,7 @@ function parseMonitor(raw, prev) {
       cpu = (dTicks / (hz * dtSec)) * 100
     }
     const rss = rssKb // KB，与原先 ps rss 字段一致
-    const mem = memTotal > 0 ? ((rss * 1024) / memTotal) * 100 : 0
+    const mem = memTotal > 0 ? ((rssKb * 1024) / memTotal) * 100 : 0
     processesRaw.push({ pid, cpu, mem, rss, command })
   }
 
@@ -183,25 +183,16 @@ function parseMonitor(raw, prev) {
 
 // PS 行格式：pid ticks rss_kb comm
 // ticks = utime+stime，两次采样算瞬时 CPU%（可 >100，与 top/FinalShell 一致）
-// 整段用分号连接成一行，适配 ssh exec / bash -c
+// 用 ps 采集 top-30 内存 + top-30 CPU，awk 读 /proc/pid/stat 取 ticks，避免 while 循环 fork bash
 const PS_COLLECT =
-  'for f in /proc/[0-9]*/stat; do ' +
-  '[ -r "$f" ] || continue; ' +
-  'line=$(cat "$f" 2>/dev/null) || continue; ' +
-  'pid=${line%% *}; ' +
-  'rest=${line#* (}; ' +
-  'comm=${rest%%) *}; ' +
-  'fields=${rest#*) }; ' +
-  'set -- $fields; ' +
-  'ticks=$(( ${12:-0} + ${13:-0} )); ' +
-  'rss=0; ' +
-  'if [ -r "/proc/$pid/status" ]; then ' +
-  'while read -r key val _; do ' +
-  '[ "$key" = "VmRSS:" ] && { rss=$val; break; }; ' +
-  'done < "/proc/$pid/status"; ' +
-  'fi; ' +
-  'echo "$pid $ticks $rss $comm"; ' +
-  'done'
+  '{ ps -eo pid,rss,comm --no-headers --sort=-rss 2>/dev/null | head -30; ' +
+  '  ps -eo pid,rss,comm --no-headers --sort=-%cpu 2>/dev/null | head -30; } | ' +
+  "sort -uk1,1 | awk '{pid=$1; rss=$2; comm=$3; " +
+  'ticks=0; f="/proc/"pid"/stat"; ' +
+  'if((getline line < f)>0){ close(f); ' +
+  'sub(/^[0-9]+ \\([^)]*\\) /,"",line); ' +
+  'n=split(line,a," "); if(n>=13) ticks=a[12]+a[13] }; ' +
+  'print pid,ticks,rss,comm}\''
 
 const MONITOR_SCRIPT = [
   "echo '===UPTIME==='",
@@ -215,7 +206,7 @@ const MONITOR_SCRIPT = [
   "echo '===PS==='",
   PS_COLLECT,
   "echo '===DF==='",
-  'df -B1 -P 2>/dev/null',
+  'timeout 3 df -B1 -P -x nfs -x nfs4 -x cifs -x tmpfs 2>/dev/null || df -B1 -P -x tmpfs 2>/dev/null',
   "echo '===NET==='",
   'cat /proc/net/dev',
 ].join('; ')

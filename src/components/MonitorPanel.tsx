@@ -315,7 +315,7 @@ export default function MonitorPanel({
     const tick = async () => {
       try {
         const next = await window.easyshell.getMonitor(sessionId)
-        if (alive) {
+        if (alive && next != null) {
           setData(next)
           setError('')
         }

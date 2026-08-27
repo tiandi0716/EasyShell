@@ -304,11 +304,21 @@ class Session extends EventEmitter {
   }
 
   async getMonitor() {
-    const raw = await this.exec(MONITOR_SCRIPT, 12000)
-    const parsed = parseMonitor(raw, this.monitorPrev)
-    this.monitorPrev = parsed._prev
-    const { _prev, ...publicData } = parsed
-    return publicData
+    // Prevent concurrent monitor execs — high-latency links accumulate channels if polls overlap
+    if (this._monitorRunning) {
+      return this._lastMonitorData || null
+    }
+    this._monitorRunning = true
+    try {
+      const raw = await this.exec(MONITOR_SCRIPT, 12000)
+      const parsed = parseMonitor(raw, this.monitorPrev)
+      this.monitorPrev = parsed._prev
+      const { _prev, ...publicData } = parsed
+      this._lastMonitorData = publicData
+      return publicData
+    } finally {
+      this._monitorRunning = false
+    }
   }
 
   async listDir(remotePath) {

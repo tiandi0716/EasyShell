@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { ConnectionConfig } from '../vite-env'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import FolderExportDialog from './FolderExportDialog'
@@ -74,9 +74,31 @@ export default function ConnectionTree({
 
   const folderNames = useMemo(() => groups.map(([folder]) => folder), [groups])
 
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('conn-tree-expanded') || '{}') } catch { return {} }
+  })
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    try { localStorage.setItem('conn-tree-expanded', JSON.stringify(expanded)) } catch {}
+  }, [expanded])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const saved = Number(localStorage.getItem('conn-tree-scroll') || 0)
+    el.scrollTop = saved
+    const onScroll = () => {
+      try { localStorage.setItem('conn-tree-scroll', String(el.scrollTop)) } catch {}
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
   const [filter, setFilter] = useState('')
   const [selectedFolders, setSelectedFolders] = useState<string[]>([])
+  const [selectedConnId, setSelectedConnId] = useState<string | null>(
+    () => localStorage.getItem('conn-tree-selected'),
+  )
   const [anchorFolder, setAnchorFolder] = useState('')
   const [showExportPick, setShowExportPick] = useState(false)
   const [showKeyManage, setShowKeyManage] = useState(false)
@@ -203,7 +225,7 @@ export default function ConnectionTree({
         onChange={(e) => setFilter(e.target.value)}
       />
 
-      <div className="conn-tree-body">
+      <div className="conn-tree-body" ref={scrollRef}>
         {groups.length === 0 ? (
           <div className="monitor-empty">
             <p>暂无连接，先新建目录 / 新建连接</p>
@@ -269,12 +291,14 @@ export default function ConnectionTree({
                         return (
                           <div
                             key={conn.id}
-                            className={`conn-row ${activeConnectionId === conn.id ? 'active' : ''}`}
+                            className={`conn-row ${activeConnectionId === conn.id ? 'active' : ''} ${selectedConnId === conn.id && activeConnectionId !== conn.id ? 'selected' : ''}`}
                             onClick={() => {
+                              setSelectedConnId(conn.id)
+                              localStorage.setItem('conn-tree-selected', conn.id)
                               setSelectedFolders([folder])
                               setAnchorFolder(folder)
                             }}
-                            onDoubleClick={() => onConnect(conn)}
+                            onDoubleClick={() => { setSelectedConnId(null); localStorage.removeItem('conn-tree-selected'); onConnect(conn) }}
                             onContextMenu={(e) => {
                               e.preventDefault()
                               e.stopPropagation()

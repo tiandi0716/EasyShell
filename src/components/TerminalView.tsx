@@ -3,6 +3,7 @@ import { Terminal } from 'xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { feedTerminalLine, isPwdCommand } from '../utils/pwdSync'
+import { silenceOscColorQueries } from '../utils/silenceOscColorQueries'
 import 'xterm/css/xterm.css'
 
 interface Props {
@@ -35,6 +36,7 @@ export default function TerminalView({
     let disposed = false
     let disposeData: (() => void) | undefined
     let onDataDispose: { dispose: () => void } | undefined
+    let oscSilenceDispose: { dispose: () => void } | undefined
     let resizeObserver: ResizeObserver | undefined
 
     const fontFamily = 'Menlo, Monaco, "IBM Plex Mono", Consolas, "Courier New", monospace'
@@ -94,6 +96,8 @@ export default function TerminalView({
       term.loadAddon(fit)
       term.loadAddon(new WebLinksAddon())
       term.open(host)
+      // 拦截 OSC 颜色查询，避免应答经 SSH 延迟泄漏进 shell 输入
+      oscSilenceDispose = silenceOscColorQueries(term)
       fit.fit()
       if (active) term.focus()
 
@@ -158,6 +162,7 @@ export default function TerminalView({
       disposed = true
       disposeData?.()
       onDataDispose?.dispose()
+      oscSilenceDispose?.dispose()
       resizeObserver?.disconnect()
       termRef.current?.dispose()
       termRef.current = null

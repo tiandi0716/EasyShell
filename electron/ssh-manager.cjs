@@ -89,13 +89,15 @@ class Session extends EventEmitter {
     if (!host) throw friendlyError(new Error('主机地址不能为空'), this.config)
     const port = Number(this.config.port) || 22
 
+    const username = String(this.config.username || '').trim()
     const auth = {
       host,
       port,
-      username: String(this.config.username || '').trim(),
+      username,
       readyTimeout: Number(this.config.readyTimeout) || 30000,
       keepaliveInterval: 10000,
-      tryKeyboard: false,
+      // 不少设备（路由器/部分 Linux）只开 keyboard-interactive，不开 password
+      tryKeyboard: this.config.authType !== 'key',
       // 强制 IPv4，避免部分 VPN 下 IPv6 优先导致失败
       family: 4,
     }
@@ -155,6 +157,16 @@ class Session extends EventEmitter {
         this.conn = conn
 
         conn
+          .on('keyboard-interactive', (_name, _instr, _lang, prompts, finish) => {
+            const answers = (Array.isArray(prompts) ? prompts : []).map((p) => {
+              const text = String(p?.prompt || '').toLowerCase()
+              if (/user|login|name|用户/.test(text) && !/password|passphrase|口令|密码/.test(text)) {
+                return username
+              }
+              return this.config.password || ''
+            })
+            finish(answers)
+          })
           .on('ready', () => {
             this.ready = true
             conn.shell(

@@ -48,6 +48,7 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
   const [dialog, setDialog] = useState<DialogState>(null)
   const [dragOver, setDragOver] = useState(false)
   const [showUploadPicker, setShowUploadPicker] = useState(false)
+  const [editNote, setEditNote] = useState('')
 
   const dragDepth = useRef(0)
   const jumpAppliedRef = useRef(0)
@@ -131,12 +132,46 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
     await refresh(path, true)
   }
 
+  useEffect(() => {
+    return window.easyshell.onSftpEditStatus((payload) => {
+      if (payload.sessionId !== sessionId) return
+      if (payload.status === 'opened') {
+        setEditNote(`已用本地编辑器打开 ${payload.remotePath}，保存后自动上传`)
+      } else if (payload.status === 'uploading') {
+        setEditNote(`正在上传 ${payload.remotePath}…`)
+      } else if (payload.status === 'saved') {
+        setEditNote(`已上传 ${payload.remotePath}`)
+      } else if (payload.status === 'error') {
+        setEditNote(`上传失败：${payload.message || payload.remotePath}`)
+      }
+    })
+  }, [sessionId])
+
   async function openItem(item: FileItem) {
     if (!item.isDir) {
       setSelected(item)
+      await handleEdit(item)
       return
     }
     await openDir(joinPath(cwd, item.name))
+  }
+
+  async function handleEdit(item?: FileItem | null) {
+    const target = item || selected
+    if (!target || target.isDir) return
+    if ((target.size || 0) > 10 * 1024 * 1024) {
+      setError('文件超过 10MB，请下载后编辑')
+      return
+    }
+    try {
+      setBusy('正在用本地编辑器打开…')
+      setError('')
+      await window.easyshell.editRemoteFile(sessionId, remoteOf(target))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy('')
+    }
   }
 
   async function goBack() {
@@ -285,6 +320,7 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
     return [
       { key: 'refresh', label: '刷新' },
       { key: 'open', label: '打开', disabled: !item?.isDir },
+      { key: 'edit', label: '用本地编辑器打开', disabled: !item || item.isDir },
       { key: 'sep1', label: '', separator: true },
       { key: 'copy', label: '复制路径' },
       { key: 'download', label: '下载', disabled: !hasItem },
@@ -317,6 +353,9 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
         break
       case 'open':
         if (item?.isDir) await openItem(item)
+        break
+      case 'edit':
+        if (item && !item.isDir) await handleEdit(item)
         break
       case 'copy':
         await copyPath(item)
@@ -447,6 +486,7 @@ export default function FileBrowser({ sessionId, jumpPath }: Props) {
       </div>
       {error ? <div className="error-banner">{error}</div> : null}
       {busy ? <div className="busy-banner">{busy}</div> : null}
+      {editNote ? <div className="busy-banner">{editNote}</div> : null}
       <div className="files-body">
         <div className="dir-tree">
           <button className={`tree-item ${cwd === '/' ? 'active' : ''}`} onClick={() => void openDir('/')}>

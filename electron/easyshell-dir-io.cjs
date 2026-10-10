@@ -16,12 +16,14 @@ function shortId(seed) {
   return randomUUID().replace(/-/g, '').slice(0, 16)
 }
 
-function toFinalShellShape(conn) {
+function toFinalShellShape(conn, idMap = new Map()) {
   const now = Date.now()
   const authType = conn.authType === 'key' ? 2 : 1
   const isRdp = conn.connType === 'rdp'
+  const exportId = idMap.get(conn.id) || shortId(conn.sourceId || conn.id)
+  const jumpExportId = conn.jumpConnectionId ? idMap.get(conn.jumpConnectionId) || '' : ''
   return {
-    id: shortId(conn.sourceId || conn.id),
+    id: exportId,
     parent_id: shortId(`folder-${conn.folder || 'root'}`),
     name: conn.name || conn.host,
     host: conn.host,
@@ -59,6 +61,8 @@ function toFinalShellShape(conn) {
     delete_key_sequence: 0,
     port_forwarding_list: [],
     remote_port_forwarding: {},
+    jump_conn_id: jumpExportId,
+    easyshell_forwards: Array.isArray(conn.forwards) ? conn.forwards : [],
   }
 }
 
@@ -86,6 +90,11 @@ function exportConnectionsToDir(rootDir, connections, folders = [], privateKeys 
     ensureDir(path.join(rootDir, ...String(folder).split('/').map(safeName)))
   }
 
+  const idMap = new Map()
+  for (const conn of connections) {
+    if (conn?.id) idMap.set(conn.id, shortId(conn.sourceId || conn.id))
+  }
+
   let written = 0
   for (const conn of connections) {
     if (!conn?.host) continue
@@ -96,7 +105,7 @@ function exportConnectionsToDir(rootDir, connections, folders = [], privateKeys 
     ensureDir(dir)
     const base = safeName(conn.name || conn.host)
     const filePath = uniqueFilePath(dir, base)
-    fs.writeFileSync(filePath, JSON.stringify(toFinalShellShape(conn), null, 2), 'utf8')
+    fs.writeFileSync(filePath, JSON.stringify(toFinalShellShape(conn, idMap), null, 2), 'utf8')
     written += 1
   }
 
@@ -178,6 +187,8 @@ function fromFinalShellShape(raw, folder) {
     folder: folder || '',
     source: 'easyshell-export',
     sourceId: raw.id || '',
+    jumpSourceId: raw.jump_conn_id || '',
+    forwards: Array.isArray(raw.easyshell_forwards) ? raw.easyshell_forwards : [],
   }
 }
 
@@ -230,7 +241,14 @@ function importConnectionsFromDir(rootDir, existing = []) {
     }
   }
 
-  const list = [...byId.values()].sort((a, b) => {
+  const list = [...byId.values()].map((item) => {
+    if (item.jumpSourceId) {
+      const target = [...byId.values()].find((c) => c.sourceId === item.jumpSourceId)
+      item.jumpConnectionId = target?.id || ''
+    }
+    delete item.jumpSourceId
+    return item
+  }).sort((a, b) => {
     const fa = a.folder || ''
     const fb = b.folder || ''
     if (fa !== fb) return fa.localeCompare(fb, 'zh-CN')

@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('easyshell', {
   deleteFolder: (name, mode, moveTo) =>
     ipcRenderer.invoke('connections:deleteFolder', { name, mode, moveTo }),
   writeClipboard: (text) => ipcRenderer.invoke('clipboard:write', text),
+  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   importFinalShell: (dir) => ipcRenderer.invoke('connections:importFinalShell', dir),
   pickImportDir: () => ipcRenderer.invoke('connections:pickImportDir'),
   exportBackup: (options) => ipcRenderer.invoke('connections:exportBackup', options || {}),
@@ -85,6 +86,11 @@ contextBridge.exposeInMainWorld('easyshell', {
 
   openSession: (payload) => ipcRenderer.invoke('ssh:open', payload),
   closeSession: (sessionId) => ipcRenderer.invoke('ssh:close', sessionId),
+  listForwards: (sessionId) => ipcRenderer.invoke('ssh:listForwards', sessionId),
+  setForwards: (sessionId, forwards) =>
+    ipcRenderer.invoke('ssh:setForwards', { sessionId, forwards }),
+  editRemoteFile: (sessionId, remotePath) =>
+    ipcRenderer.invoke('sftp:edit', { sessionId, remotePath }),
   listOpenSessions: () => ipcRenderer.invoke('ssh:listOpen'),
   getSessionOutput: (sessionId) => ipcRenderer.invoke('ssh:getOutput', sessionId),
   writeSession: (sessionId, data) => ipcRenderer.send('ssh:write', { sessionId, data }),
@@ -155,6 +161,11 @@ contextBridge.exposeInMainWorld('easyshell', {
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on('ssh:closed', listener)
     return () => ipcRenderer.removeListener('ssh:closed', listener)
+  },
+  onSftpEditStatus: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('sftp:editStatus', listener)
+    return () => ipcRenderer.removeListener('sftp:editStatus', listener)
   },
   onSessionError: (cb) => {
     const listener = (_e, payload) => cb(payload)

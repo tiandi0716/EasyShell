@@ -16,6 +16,7 @@ import FileBrowser from './components/FileBrowser'
 import FolderPickDialog from './components/FolderPickDialog'
 import KoaIcon from './components/KoaIcon'
 import MonitorPanel from './components/MonitorPanel'
+import PortForwardDialog from './components/PortForwardDialog'
 import PromptDialog from './components/PromptDialog'
 import RecentConnections from './components/RecentConnections'
 import RdpView from './components/RdpView'
@@ -23,6 +24,8 @@ import SettingsDialog from './components/SettingsDialog'
 import TerminalView from './components/TerminalView'
 import TransferMenu from './components/TransferMenu'
 import { extractPwdPath } from './utils/pwdSync'
+import { buildConnectCommand } from './utils/sshCommand'
+import { readTerminalPrefs } from './utils/terminalPrefs'
 import { applyUiFontSize } from './utils/uiFontSize'
 import {
   pushRecentConnection,
@@ -44,7 +47,10 @@ interface SessionTab {
   status: 'connecting' | 'ready' | 'closed' | 'error'
   error?: string
   screen?: { width: number; height: number }
+  reconnectAttempt?: number
 }
+
+const RECONNECT_DELAYS = [2000, 5000, 10000, 20000, 30000]
 
 type DialogState =
   | { type: 'createFolder' }
@@ -116,6 +122,18 @@ export default function App() {
   const [tabMenu, setTabMenu] = useState<{ tab: SessionTab; x: number; y: number } | null>(null)
   const [cwdBySession, setCwdBySession] = useState<Record<string, CwdJump>>({})
   const [recent, setRecent] = useState<RecentEntry[]>(() => readRecentEntries())
+  const [copyToast, setCopyToast] = useState<string | null>(null)
+  const [forwardDialog, setForwardDialog] = useState<{
+    conn: ConnectionConfig
+    sessionId?: string
+  } | null>(null)
+  const copyToastTimerRef = useRef<number | undefined>(undefined)
+  const connectionsRef = useRef(connections)
+  connectionsRef.current = connections
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  const reconnectTimersRef = useRef<Map<string, number>>(new Map())
+  const scheduleReconnectRef = useRef<(tab: SessionTab) => void>(() => {})
   const pwdExpectRef = useRef<Map<string, { buf: string; timer: number }>>(new Map())
   const sidebarWidthRef = useRef(sidebarWidth)
   sidebarWidthRef.current = sidebarWidth
@@ -132,6 +150,11 @@ export default function App() {
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) || null,
     [tabs, activeTabId],
+  )
+
+  const activeConnection = useMemo(
+    () => connections.find((c) => c.id === activeTab?.connectionId) || null,
+    [connections, activeTab?.connectionId],
   )
 
   const readySessionIds = useMemo(
@@ -271,12 +294,18 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const offClose = window.easyshell.onSessionClose(({ sessionId }) => {
+    const offClose = window.easyshell.onSessionClose(({ sessionId, reason }) => {
       setTabs((prev) =>
         prev.map((tab) =>
-          tab.id === sessionId ? { ...tab, status: 'closed', error: '连接已断开' } : tab,
+          tab.id === sessionId
+            ? { ...tab, status: 'closed', error: tab.error || '连接已断开' }
+            : tab,
         ),
       )
+      if (reason === 'lost' && readTerminalPrefs().autoReconnect) {
+        const tab = tabsRef.current.find((t) => t.id === sessionId)
+        if (tab?.connectionId && tab.kind !== 'rdp') scheduleReconnectRef.current(tab)
+      }
     })
     const offError = window.easyshell.onSessionError(({ sessionId, message }) => {
       setTabs((prev) =>
@@ -331,11 +360,25 @@ export default function App() {
     setShowForm(true)
   }
 
-  async function connectTo(conn: ConnectionConfig, replaceTabId?: string) {
+  function cancelReconnect(tabId: string) {
+    const timer = reconnectTimersRef.current.get(tabId)
+    if (timer) {
+      window.clearTimeout(timer)
+      reconnectTimersRef.current.delete(tabId)
+    }
+  }
+
+  async function connectTo(
+    conn: ConnectionConfig,
+    replaceTabId?: string,
+    options?: { background?: boolean },
+  ): Promise<boolean> {
+    const background = options?.background === true
     const isRdp = (conn.connType || 'ssh') === 'rdp'
-    if (conn.id) setRecent(pushRecentConnection(conn))
+    if (conn.id && !background) setRecent(pushRecentConnection(conn))
     const tempId = replaceTabId || `pending-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
     const title = conn.name || `${conn.host}`
+    if (replaceTabId) cancelReconnect(replaceTabId)
     const applyConnecting = () => {
       if (replaceTabId) {
         setTabs((prev) =>
@@ -348,11 +391,12 @@ export default function App() {
                   kind: isRdp ? 'rdp' : 'ssh',
                   status: 'connecting',
                   error: undefined,
+                  reconnectAttempt: background ? tab.reconnectAttempt : 0,
                 }
               : tab,
           ),
         )
-        setActiveTabId(replaceTabId)
+        if (!background) setActiveTabId(replaceTabId)
       } else {
         setTabs((prev) => [
           ...prev,
@@ -364,13 +408,13 @@ export default function App() {
             status: 'connecting',
           },
         ])
-        setActiveTabId(tempId)
+        if (!background) setActiveTabId(tempId)
       }
     }
     // RDP 需立刻切到全宽测量舞台，再读尺寸；SSH 普通异步更新即可
-    if (isRdp) flushSync(applyConnecting)
+    if (isRdp && !background) flushSync(applyConnecting)
     else applyConnecting()
-    setShowConnManager(false)
+    if (!background) setShowConnManager(false)
 
     try {
       if (isRdp) {
@@ -398,12 +442,13 @@ export default function App() {
                   status: 'ready',
                   error: undefined,
                   screen,
+                  reconnectAttempt: 0,
                 }
               : tab,
           ),
         )
-        setActiveTabId(sessionId)
-        return
+        setActiveTabId((cur) => (background ? (cur === tempId ? sessionId : cur) : sessionId))
+        return true
       }
 
       const { sessionId } = await window.easyshell.openSession({
@@ -412,11 +457,12 @@ export default function App() {
       setTabs((prev) =>
         prev.map((tab) =>
           tab.id === tempId
-            ? { ...tab, id: sessionId, kind: 'ssh', status: 'ready', error: undefined }
+            ? { ...tab, id: sessionId, kind: 'ssh', status: 'ready', error: undefined, reconnectAttempt: 0 }
             : tab,
         ),
       )
-      setActiveTabId(sessionId)
+      setActiveTabId((cur) => (background ? (cur === tempId ? sessionId : cur) : sessionId))
+      return true
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setTabs((prev) =>
@@ -424,14 +470,56 @@ export default function App() {
           tab.id === tempId ? { ...tab, status: 'error', error: message } : tab,
         ),
       )
+      return false
     }
   }
 
+  function scheduleReconnect(tab: SessionTab) {
+    const connId = tab.connectionId
+    if (!connId) return
+    const attempt = tab.reconnectAttempt || 0
+    if (attempt >= RECONNECT_DELAYS.length) {
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === tab.id ? { ...t, error: t.error || '自动重连失败，请手动重连' } : t,
+        ),
+      )
+      return
+    }
+    const delay = RECONNECT_DELAYS[attempt]
+    cancelReconnect(tab.id)
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === tab.id
+          ? {
+              ...t,
+              error: `连接已断开，${delay / 1000}s 后自动重连（${attempt + 1}/${RECONNECT_DELAYS.length}）`,
+              reconnectAttempt: attempt,
+            }
+          : t,
+      ),
+    )
+    const timer = window.setTimeout(() => {
+      reconnectTimersRef.current.delete(tab.id)
+      const conn = connectionsRef.current.find((c) => c.id === connId)
+      const still = tabsRef.current.find((t) => t.id === tab.id)
+      if (!conn || !still || still.status === 'ready') return
+      void connectTo(conn, tab.id, { background: true }).then((ok) => {
+        if (ok) return
+        const failed = tabsRef.current.find((t) => t.id === tab.id)
+        if (failed) scheduleReconnect({ ...failed, reconnectAttempt: attempt + 1 })
+      })
+    }, delay)
+    reconnectTimersRef.current.set(tab.id, timer)
+  }
+  scheduleReconnectRef.current = scheduleReconnect
+
   async function disconnectTab(tabId: string) {
+    cancelReconnect(tabId)
     await window.easyshell.closeSession(tabId)
     setTabs((prev) =>
       prev.map((tab) =>
-        tab.id === tabId ? { ...tab, status: 'closed', error: '已断开' } : tab,
+        tab.id === tabId ? { ...tab, status: 'closed', error: '已断开', reconnectAttempt: 0 } : tab,
       ),
     )
   }
@@ -442,6 +530,7 @@ export default function App() {
       setDialog({ type: 'alert', title: '无法重连', message: '找不到对应的主机配置' })
       return
     }
+    cancelReconnect(tab.id)
     if (tab.status === 'ready') {
       await window.easyshell.closeSession(tab.id)
     }
@@ -530,23 +619,19 @@ export default function App() {
     await loadConnections()
   }
 
+  async function copyToClipboard(text: string) {
+    await window.easyshell.writeClipboard(text)
+    setCopyToast(`已复制：${text}`)
+    window.clearTimeout(copyToastTimerRef.current)
+    copyToastTimerRef.current = window.setTimeout(() => setCopyToast(null), 1800)
+  }
+
   async function handleCopyAddress(conn: ConnectionConfig) {
-    await window.easyshell.writeClipboard(conn.host)
+    await copyToClipboard(conn.host)
   }
 
   async function handleCopySshCommand(conn: ConnectionConfig) {
-    if ((conn.connType || 'ssh') === 'rdp') {
-      const port = conn.port || 3389
-      const text = port === 3389 ? conn.host : `${conn.host}:${port}`
-      await window.easyshell.writeClipboard(text)
-      return
-    }
-    const port = conn.port || 22
-    const text =
-      port === 22
-        ? `ssh ${conn.username}@${conn.host}`
-        : `ssh -p ${port} ${conn.username}@${conn.host}`
-    await window.easyshell.writeClipboard(text)
+    await copyToClipboard(buildConnectCommand(conn))
   }
 
   async function handleExportBackup(options?: { folders?: string[] }) {
@@ -626,6 +711,7 @@ export default function App() {
   }
 
   async function closeTab(id: string) {
+    cancelReconnect(id)
     await window.easyshell.closeSession(id)
     setTabs((prev) => {
       const idx = prev.findIndex((tab) => tab.id === id)
@@ -654,6 +740,7 @@ export default function App() {
 
   async function closeOtherTabs(keepId: string) {
     const others = tabs.filter((t) => t.id !== keepId)
+    for (const tab of others) cancelReconnect(tab.id)
     for (const tab of others) {
       // eslint-disable-next-line no-await-in-loop
       await window.easyshell.closeSession(tab.id)
@@ -666,6 +753,7 @@ export default function App() {
     const idx = tabs.findIndex((t) => t.id === keepId)
     if (idx <= 0) return
     const toClose = tabs.slice(0, idx)
+    for (const tab of toClose) cancelReconnect(tab.id)
     for (const tab of toClose) {
       // eslint-disable-next-line no-await-in-loop
       await window.easyshell.closeSession(tab.id)
@@ -681,6 +769,7 @@ export default function App() {
     const idx = tabs.findIndex((t) => t.id === keepId)
     if (idx < 0 || idx >= tabs.length - 1) return
     const toClose = tabs.slice(idx + 1)
+    for (const tab of toClose) cancelReconnect(tab.id)
     for (const tab of toClose) {
       // eslint-disable-next-line no-await-in-loop
       await window.easyshell.closeSession(tab.id)
@@ -693,6 +782,7 @@ export default function App() {
   }
 
   async function closeAllTabs() {
+    for (const tab of tabs) cancelReconnect(tab.id)
     for (const tab of tabs) {
       // eslint-disable-next-line no-await-in-loop
       await window.easyshell.closeSession(tab.id)
@@ -865,6 +955,8 @@ export default function App() {
             unavailableReason={
               isRdpLayout && !isActiveRdp ? '正在建立 Windows 远程桌面…' : null
             }
+            connection={activeConnection}
+            onCopy={(text) => void copyToClipboard(text)}
           />
         </div>
         </aside>
@@ -1116,8 +1208,25 @@ export default function App() {
               )
             ) : activeTab.status === 'error' || activeTab.status === 'closed' ? (
               <div className="empty">
-                <h2>{activeTab.status === 'closed' ? '远程桌面已断开' : '连接失败'}</h2>
+                <h2>
+                  {activeTab.status === 'closed'
+                    ? activeTab.kind === 'rdp'
+                      ? '远程桌面已断开'
+                      : '连接已断开'
+                    : '连接失败'}
+                </h2>
                 <p>{activeTab.error || '请检查主机、账号密码后重试'}</p>
+                {activeTab.connectionId ? (
+                  <div className="empty-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void reconnectTab(activeTab)}
+                    >
+                      重新连接
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <>
@@ -1210,6 +1319,7 @@ export default function App() {
         <ConnectionForm
           initial={editing}
           folders={folders}
+          connections={connections}
           defaultConnType={createConnType}
           onClose={() => {
             setShowForm(false)
@@ -1349,6 +1459,16 @@ export default function App() {
               label: '复制地址',
               disabled: !tabMenu.tab.connectionId,
             },
+            {
+              key: 'copyCmd',
+              label: tabMenu.tab.kind === 'rdp' ? '复制 RDP 地址' : '复制 SSH 命令',
+              disabled: !tabMenu.tab.connectionId,
+            },
+            {
+              key: 'forwards',
+              label: '端口转发…',
+              disabled: !tabMenu.tab.connectionId || tabMenu.tab.kind === 'rdp',
+            },
             { key: 'sep1', label: '', separator: true },
             {
               key: 'connect',
@@ -1384,14 +1504,29 @@ export default function App() {
           onSelect={(key) => {
             const tab = tabMenu.tab
             if (key === 'duplicate') void duplicateTab(tab)
-            if (key === 'copyAddress') {
+            if (key === 'copyAddress' || key === 'copyCmd') {
               const conn = connections.find((c) => c.id === tab.connectionId)
-              if (conn) void handleCopyAddress(conn)
-              else
+              if (!conn)
                 setDialog({
                   type: 'alert',
                   title: '无法复制',
                   message: '找不到对应的主机配置',
+                })
+              else if (key === 'copyAddress') void handleCopyAddress(conn)
+              else void handleCopySshCommand(conn)
+            }
+            if (key === 'forwards') {
+              const conn = connections.find((c) => c.id === tab.connectionId)
+              if (!conn)
+                setDialog({
+                  type: 'alert',
+                  title: '无法配置',
+                  message: '找不到对应的主机配置',
+                })
+              else
+                setForwardDialog({
+                  conn,
+                  sessionId: tab.status === 'ready' && tab.kind !== 'rdp' ? tab.id : undefined,
                 })
             }
             if (key === 'connect') void reconnectTab(tab)
@@ -1404,6 +1539,24 @@ export default function App() {
             if (key === 'closeAll') void closeAllTabs()
           }}
         />
+      ) : null}
+
+      {forwardDialog ? (
+        <PortForwardDialog
+          connection={forwardDialog.conn}
+          sessionId={forwardDialog.sessionId}
+          onClose={() => setForwardDialog(null)}
+          onSaved={async (conn) => {
+            await handleSave(conn)
+            setForwardDialog((cur) => (cur ? { ...cur, conn } : cur))
+          }}
+        />
+      ) : null}
+
+      {copyToast ? (
+        <div className="copy-toast" role="status">
+          {copyToast}
+        </div>
       ) : null}
     </div>
   )

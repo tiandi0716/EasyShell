@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { MonitorData, RdpMonitorData } from '../vite-env'
+import type { ConnectionConfig, MonitorData, RdpMonitorData } from '../vite-env'
 import { formatBytes, formatRate, pct } from '../utils/format'
+import { buildConnectCommand } from '../utils/sshCommand'
 
 interface Props {
   /** SSH 会话 id；与 rdpSessionId 互斥 */
@@ -9,6 +10,9 @@ interface Props {
   rdpSessionId?: string | null
   /** 无可用会话时的说明 */
   unavailableReason?: string | null
+  /** 当前标签对应的主机配置，用于展示/复制地址 */
+  connection?: ConnectionConfig | null
+  onCopy?: (text: string) => void
 }
 
 type ProcSortKey = 'rss' | 'cpu'
@@ -239,6 +243,67 @@ function statusLabel(status: RdpMonitorData['status']) {
   return '已断开'
 }
 
+function HostInfo({
+  connection,
+  ips,
+  onCopy,
+}: {
+  connection: ConnectionConfig
+  ips: MonitorData['ips']
+  onCopy: (text: string) => void
+}) {
+  const port = Number(connection.port) || 22
+  const address = port === 22 ? connection.host : `${connection.host}:${port}`
+  const command = buildConnectCommand(connection)
+  const shown = ips.slice(0, 6)
+
+  return (
+    <section className="monitor-block">
+      <h4>连接信息</h4>
+      <div className="host-line">
+        <span className="host-label">地址</span>
+        <span className="host-value" title={`${connection.username}@${address}`}>
+          {address}
+        </span>
+        <button
+          type="button"
+          className="host-copy"
+          title="复制地址"
+          onClick={() => onCopy(connection.host)}
+        >
+          复制
+        </button>
+        <button type="button" className="host-copy" title={command} onClick={() => onCopy(command)}>
+          SSH 命令
+        </button>
+      </div>
+      {shown.map((ip, i) => {
+        const showLabel = i === 0 || shown[i - 1].private !== ip.private
+        return (
+          <div className="host-line" key={`${ip.iface}-${ip.address}`}>
+            <span className="host-label">{showLabel ? (ip.private ? '内网' : '公网') : ''}</span>
+            <span
+              className="host-value"
+              title={`${ip.address}${ip.prefix ? `/${ip.prefix}` : ''}${ip.iface ? ` · ${ip.iface}` : ''}`}
+            >
+              {ip.address}
+              {ip.iface ? <em>{ip.iface}</em> : null}
+            </span>
+            <button
+              type="button"
+              className="host-copy"
+              title="复制 IP"
+              onClick={() => onCopy(ip.address)}
+            >
+              复制
+            </button>
+          </div>
+        )
+      })}
+    </section>
+  )
+}
+
 function RdpMonitorView({ data }: { data: RdpMonitorData }) {
   return (
     <div className="monitor">
@@ -270,8 +335,12 @@ export default function MonitorPanel({
   sessionId,
   rdpSessionId = null,
   unavailableReason,
+  connection = null,
+  onCopy,
 }: Props) {
   const [data, setData] = useState<MonitorData | null>(null)
+  /** data 属于哪个会话：切标签时旧数据会先留着，IP 不能张冠李戴 */
+  const [dataSessionId, setDataSessionId] = useState<string | null>(null)
   const [rdpData, setRdpData] = useState<RdpMonitorData | null>(null)
   const [error, setError] = useState('')
   const [sortKey, setSortKey] = useState<ProcSortKey>('cpu')
@@ -317,6 +386,7 @@ export default function MonitorPanel({
         const next = await window.easyshell.getMonitor(sessionId)
         if (alive && next != null) {
           setData(next)
+          setDataSessionId(sessionId)
           setError('')
         }
       } catch (err) {
@@ -375,10 +445,23 @@ export default function MonitorPanel({
     )
   }
 
+  const hostInfo =
+    connection && onCopy ? (
+      <HostInfo
+        connection={connection}
+        ips={data && dataSessionId === sessionId ? data.ips : []}
+        onCopy={onCopy}
+      />
+    ) : null
+
   if (!data) {
+    // 监控采不到（如 ESXi / 精简系统）时，地址仍可复制
     return (
-      <div className="monitor-empty">
-        <p>{error || '正在采集监控数据…'}</p>
+      <div className="monitor">
+        {hostInfo}
+        <div className="monitor-empty">
+          <p>{error || '正在采集监控数据…'}</p>
+        </div>
       </div>
     )
   }
@@ -388,6 +471,7 @@ export default function MonitorPanel({
 
   return (
     <div className="monitor">
+      {hostInfo}
       <section className="monitor-block">
         <h4>系统信息</h4>
         <div className="info-line">运行时间：{localizeUptime(data.uptimeText || '-')}</div>

@@ -19,6 +19,31 @@ export interface ConnectionConfig {
   folder?: string
   source?: string
   sourceId?: string
+  /** 经另一台 SSH 中转，仅一层 */
+  jumpConnectionId?: string
+  /** 本地端口 → 远端内网 */
+  forwards?: PortForwardRule[]
+}
+
+export interface PortForwardRule {
+  listenPort: number
+  destHost: string
+  destPort: number
+}
+
+export interface PortForwardStatus extends PortForwardRule {
+  status: 'starting' | 'listening' | 'error'
+  error?: string | null
+}
+
+export type SessionCloseReason = 'exit' | 'local' | 'lost'
+
+export interface SftpEditStatus {
+  sessionId: string
+  remotePath: string
+  status: 'opened' | 'uploading' | 'saved' | 'error'
+  message?: string
+  localPath?: string
 }
 
 export interface PrivateKeyInfo {
@@ -91,7 +116,19 @@ export interface MonitorDisk {
   mount: string
 }
 
+export interface MonitorIp {
+  /** 网卡名；hostname -I 兜底时为空 */
+  iface: string
+  address: string
+  /** 掩码位数；未知为 0 */
+  prefix: number
+  /** RFC1918 / CGNAT 内网段 */
+  private: boolean
+}
+
 export interface MonitorData {
+  /** 远端网卡 IPv4（已滤掉 docker 等虚拟网桥），内网在前 */
+  ips: MonitorIp[]
   uptimeText: string
   load: number[]
   cpuPercent: number
@@ -144,6 +181,7 @@ export interface EasyShellApi {
     removedConnections?: number
   }>
   writeClipboard: (text: string) => Promise<boolean>
+  readClipboard: () => Promise<string>
   importFinalShell: (dir?: string | null) => Promise<ImportResult>
   pickImportDir: () => Promise<string | null>
   exportBackup: (options?: { folders?: string[] }) => Promise<{
@@ -279,6 +317,12 @@ export interface EasyShellApi {
     config: ConnectionConfig & { cols?: number; rows?: number }
   }) => Promise<{ sessionId: string }>
   closeSession: (sessionId: string) => Promise<boolean>
+  listForwards: (sessionId: string) => Promise<PortForwardStatus[]>
+  setForwards: (sessionId: string, forwards: PortForwardRule[]) => Promise<PortForwardStatus[]>
+  editRemoteFile: (
+    sessionId: string,
+    remotePath: string,
+  ) => Promise<{ localPath: string }>
   listOpenSessions: () => Promise<
     Array<{
       sessionId: string
@@ -333,7 +377,10 @@ export interface EasyShellApi {
   onSessionData: (
     cb: (payload: { sessionId: string; data: string; offset?: number }) => void,
   ) => () => void
-  onSessionClose: (cb: (payload: { sessionId: string }) => void) => () => void
+  onSessionClose: (
+    cb: (payload: { sessionId: string; reason?: SessionCloseReason }) => void,
+  ) => () => void
+  onSftpEditStatus: (cb: (payload: SftpEditStatus) => void) => () => void
   onSessionError: (
     cb: (payload: { sessionId: string; message: string }) => void,
   ) => () => void

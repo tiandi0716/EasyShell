@@ -1,9 +1,16 @@
 const { Client } = require('ssh2')
 const fs = require('fs')
+const net = require('net')
 const path = require('path')
 const { EventEmitter } = require('events')
 const { SocksClient } = require('socks')
-const { modeToString, fileTypeLabel, parseMonitor, MONITOR_SCRIPT } = require('./monitor.cjs')
+const {
+  modeToString,
+  fileTypeLabel,
+  parseMonitor,
+  MONITOR_SCRIPT,
+  IP_SCRIPT,
+} = require('./monitor.cjs')
 const { resolveProxyForSsh } = require('./proxy.cjs')
 
 function friendlyError(err, config) {
@@ -37,6 +44,96 @@ function friendlyError(err, config) {
   return new Error(raw)
 }
 
+async function buildAuth(config) {
+  const host = String(config.host || '').trim()
+  if (!host) throw friendlyError(new Error('主机地址不能为空'), config)
+  const port = Number(config.port) || 22
+  const username = String(config.username || '').trim()
+  const auth = {
+    host,
+    port,
+    username,
+    readyTimeout: Number(config.readyTimeout) || 30000,
+    keepaliveInterval: 10000,
+    tryKeyboard: config.authType !== 'key',
+    family: 4,
+  }
+  try {
+    if (config.authType === 'key') {
+      if (config.privateKeyId) {
+        const { getKeyPem } = require('./key-store.cjs')
+        auth.privateKey = getKeyPem(config.privateKeyId)
+      } else if (config.privateKeyPath) {
+        auth.privateKey = fs.readFileSync(config.privateKeyPath)
+      } else {
+        throw new Error('未选择私钥，请在连接配置中浏览并选择私钥')
+      }
+      if (config.passphrase) auth.passphrase = config.passphrase
+    } else {
+      auth.password = config.password || ''
+    }
+  } catch (err) {
+    throw friendlyError(err, config)
+  }
+  return { auth, host, port, username }
+}
+
+function bindKeyboard(conn, config, username) {
+  conn.on('keyboard-interactive', (_name, _instr, _lang, prompts, finish) => {
+    const answers = (Array.isArray(prompts) ? prompts : []).map((p) => {
+      const text = String(p?.prompt || '').toLowerCase()
+      if (/user|login|name|用户/.test(text) && !/password|passphrase|口令|密码/.test(text)) {
+        return username
+      }
+      return config.password || ''
+    })
+    finish(answers)
+  })
+}
+
+async function attachProxy(auth, config, destHost, destPort) {
+  const proxy = await resolveProxyForSsh(config)
+  if (!proxy) return { auth, proxyInfo: null }
+  try {
+    const { socket } = await SocksClient.createConnection({
+      proxy: {
+        host: proxy.host,
+        port: proxy.port,
+        type: proxy.type === 4 ? 4 : 5,
+      },
+      command: 'connect',
+      destination: { host: destHost, port: destPort },
+      timeout: Number(config.readyTimeout) || 30000,
+    })
+    auth.sock = socket
+    return { auth, proxyInfo: `${proxy.host}:${proxy.port}` }
+  } catch {
+    delete auth.sock
+    return { auth, proxyInfo: null }
+  }
+}
+
+function connectRawClient(auth, config, username) {
+  return new Promise((resolve, reject) => {
+    const conn = new Client()
+    let settled = false
+    const done = (err, value) => {
+      if (settled) return
+      settled = true
+      if (err) reject(err)
+      else resolve(value)
+    }
+    bindKeyboard(conn, config, username)
+    conn
+      .on('ready', () => done(null, conn))
+      .on('error', (err) => done(err))
+      .on('close', () => {
+        if (!settled) done(new Error('SSH 连接已关闭'))
+      })
+      .connect(auth)
+  })
+}
+
 class Session extends EventEmitter {
   constructor(id, config) {
     super()
@@ -53,6 +150,41 @@ class Session extends EventEmitter {
     this.outputBuffer = ''
     this.outputBase = 0
     this.maxOutputBuffer = 256 * 1024
+    this.jumpConn = null
+    this.forwardServers = []
+    this._finished = false
+    this._localClose = false
+  }
+
+  finish(reason) {
+    if (this._finished) return
+    this._finished = true
+    this.ready = false
+    this.safeEmit('close', reason || 'lost')
+    this.cleanup()
+  }
+
+  cleanup() {
+    for (const item of this.forwardServers) {
+      try {
+        item.server.close()
+      } catch {}
+    }
+    this.forwardServers = []
+    try {
+      if (this.stream) this.stream.close()
+    } catch {}
+    try {
+      if (this.conn) this.conn.end()
+    } catch {}
+    try {
+      if (this.jumpConn) this.jumpConn.end()
+    } catch {}
+    this.stream = null
+    this.sftp = null
+    this.conn = null
+    this.jumpConn = null
+    this.ready = false
   }
 
   // 避免尚未挂 listener 时 emit('error') 变成主进程 Uncaught Exception
@@ -85,62 +217,28 @@ class Session extends EventEmitter {
   }
 
   async connect() {
-    const host = String(this.config.host || '').trim()
-    if (!host) throw friendlyError(new Error('主机地址不能为空'), this.config)
-    const port = Number(this.config.port) || 22
+    const { auth, host, port, username } = await buildAuth(this.config)
+    const jumpConfig = this.config.jump && this.config.jump.host ? this.config.jump : null
 
-    const username = String(this.config.username || '').trim()
-    const auth = {
-      host,
-      port,
-      username,
-      readyTimeout: Number(this.config.readyTimeout) || 30000,
-      keepaliveInterval: 10000,
-      // 不少设备（路由器/部分 Linux）只开 keyboard-interactive，不开 password
-      tryKeyboard: this.config.authType !== 'key',
-      // 强制 IPv4，避免部分 VPN 下 IPv6 优先导致失败
-      family: 4,
-    }
-
-    try {
-      if (this.config.authType === 'key') {
-        if (this.config.privateKeyId) {
-          const { getKeyPem } = require('./key-store.cjs')
-          auth.privateKey = getKeyPem(this.config.privateKeyId)
-        } else if (this.config.privateKeyPath) {
-          auth.privateKey = fs.readFileSync(this.config.privateKeyPath)
-        } else {
-          throw new Error('未选择私钥，请在连接配置中浏览并选择私钥')
-        }
-        if (this.config.passphrase) auth.passphrase = this.config.passphrase
-      } else {
-        auth.password = this.config.password || ''
-      }
-    } catch (err) {
-      throw friendlyError(err, this.config)
-    }
-
-    // 自动识别系统/本地代理（Clash 等）；有则走代理，失败再回退直连
-    const proxy = await resolveProxyForSsh(this.config)
-    if (proxy) {
+    if (jumpConfig) {
+      const jump = await buildAuth(jumpConfig)
+      const proxied = await attachProxy(jump.auth, jumpConfig, jump.host, jump.port)
+      this.proxyInfo = proxied.proxyInfo
       try {
-        const { socket } = await SocksClient.createConnection({
-          proxy: {
-            host: proxy.host,
-            port: proxy.port,
-            type: proxy.type === 4 ? 4 : 5,
-          },
-          command: 'connect',
-          destination: { host, port },
-          timeout: Number(this.config.readyTimeout) || 30000,
-        })
-        auth.sock = socket
-        this.proxyInfo = `${proxy.host}:${proxy.port}`
-      } catch {
-        // 代理建连失败时回退直连（与 FinalShell「能连就连」类似）
-        delete auth.sock
-        this.proxyInfo = null
+        this.jumpConn = await connectRawClient(proxied.auth, jumpConfig, jump.username)
+      } catch (err) {
+        throw friendlyError(err, { ...jumpConfig, host: `跳板 ${jump.host}` })
       }
+      const channel = await new Promise((resolve, reject) => {
+        this.jumpConn.forwardOut('127.0.0.1', 0, host, port, (err, stream) => {
+          if (err) reject(err)
+          else resolve(stream)
+        })
+      })
+      auth.sock = channel
+    } else {
+      const proxied = await attachProxy(auth, this.config, host, port)
+      this.proxyInfo = proxied.proxyInfo
     }
 
     const openWithAuth = (connectAuth) =>
@@ -155,18 +253,9 @@ class Session extends EventEmitter {
 
         const conn = new Client()
         this.conn = conn
+        bindKeyboard(conn, this.config, username)
 
         conn
-          .on('keyboard-interactive', (_name, _instr, _lang, prompts, finish) => {
-            const answers = (Array.isArray(prompts) ? prompts : []).map((p) => {
-              const text = String(p?.prompt || '').toLowerCase()
-              if (/user|login|name|用户/.test(text) && !/password|passphrase|口令|密码/.test(text)) {
-                return username
-              }
-              return this.config.password || ''
-            })
-            finish(answers)
-          })
           .on('ready', () => {
             this.ready = true
             conn.shell(
@@ -184,9 +273,11 @@ class Session extends EventEmitter {
                 stream.on('data', (data) => {
                   this.pushOutput(data)
                 })
+                stream.on('exit', () => {
+                  if (!this._localClose) this._exitSeen = true
+                })
                 stream.on('close', () => {
-                  this.safeEmit('close')
-                  this.dispose()
+                  this.finish(this._localClose ? 'local' : this._exitSeen ? 'exit' : 'lost')
                 })
                 if (stream.stderr) {
                   stream.stderr.on('data', (data) => {
@@ -211,19 +302,20 @@ class Session extends EventEmitter {
               done(new Error('SSH 连接已关闭'))
               return
             }
-            this.safeEmit('close')
+            this.finish(this._localClose ? 'local' : this._exitSeen ? 'exit' : 'lost')
           })
           .connect(connectAuth)
       })
 
     try {
       await openWithAuth(auth)
+      await this.applyForwards(this.config.forwards)
       return
     } catch (err) {
       const raw = String(err && err.message ? err.message : err)
       const unreachable = /EHOSTDOWN|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|ECONNREFUSED/i.test(raw)
-      // 直连失败且刚才没用上代理时，再自动探测一次代理重试
-      if (!auth.sock && unreachable) {
+      // 直连失败且刚才没用上代理/跳板时，再自动探测一次代理重试
+      if (!auth.sock && !jumpConfig && unreachable) {
         const again = await resolveProxyForSsh({ ...this.config, proxyMode: 'system' })
         if (again) {
           try {
@@ -240,6 +332,7 @@ class Session extends EventEmitter {
             const retryAuth = { ...auth, sock: socket }
             this.proxyInfo = `${again.host}:${again.port}`
             await openWithAuth(retryAuth)
+            await this.applyForwards(this.config.forwards)
             return
           } catch (retryErr) {
             throw friendlyError(retryErr, this.config)
@@ -322,7 +415,10 @@ class Session extends EventEmitter {
     }
     this._monitorRunning = true
     try {
-      const raw = await this.exec(MONITOR_SCRIPT, 12000)
+      // 网卡 IP 很少变，ESXi 上 esxcli 还要几百毫秒：首次采集后每分钟刷新一次
+      const withIps = !this._ipsAt || Date.now() - this._ipsAt > 60000
+      const raw = await this.exec(withIps ? `${MONITOR_SCRIPT}; ${IP_SCRIPT}` : MONITOR_SCRIPT, 12000)
+      if (withIps) this._ipsAt = Date.now()
       const parsed = parseMonitor(raw, this.monitorPrev)
       this.monitorPrev = parsed._prev
       const { _prev, ...publicData } = parsed
@@ -529,17 +625,120 @@ class Session extends EventEmitter {
     return remotePath
   }
 
+  stat(remotePath) {
+    return new Promise((resolve, reject) => {
+      if (!this.sftp) {
+        reject(new Error('SFTP 未就绪'))
+        return
+      }
+      this.sftp.stat(remotePath, (err, attrs) => {
+        if (err) reject(err)
+        else resolve(attrs)
+      })
+    })
+  }
+
+  listForwards() {
+    return this.forwardServers.map((item) => ({
+      listenPort: item.listenPort,
+      destHost: item.destHost,
+      destPort: item.destPort,
+      status: item.status,
+      error: item.error || null,
+    }))
+  }
+
+  async setForwards(rules) {
+    this.config.forwards = Array.isArray(rules) ? rules : []
+    if (this.ready) await this.applyForwards(this.config.forwards)
+    return this.listForwards()
+  }
+
+  clearForwards() {
+    for (const item of this.forwardServers) {
+      try {
+        item.server.close()
+      } catch {}
+    }
+    this.forwardServers = []
+  }
+
+  startForward(rule) {
+    const listenPort = Number(rule.listenPort)
+    const destHost = String(rule.destHost || '127.0.0.1').trim() || '127.0.0.1'
+    const destPort = Number(rule.destPort)
+    if (!listenPort || listenPort < 1 || listenPort > 65535 || !destPort) {
+      return Promise.resolve({
+        listenPort,
+        destHost,
+        destPort,
+        status: 'error',
+        error: '端口无效',
+      })
+    }
+    return new Promise((resolve) => {
+      const server = net.createServer((sock) => {
+        if (!this.conn || !this.ready) {
+          sock.destroy()
+          return
+        }
+        this.conn.forwardOut('127.0.0.1', 0, destHost, destPort, (err, stream) => {
+          if (err) {
+            sock.destroy()
+            return
+          }
+          sock.pipe(stream)
+          stream.pipe(sock)
+          sock.on('close', () => {
+            try {
+              stream.end()
+            } catch {}
+          })
+          stream.on('close', () => {
+            try {
+              sock.end()
+            } catch {}
+          })
+        })
+      })
+      const entry = { listenPort, destHost, destPort, status: 'starting', error: null, server }
+      this.forwardServers.push(entry)
+      server.on('error', (err) => {
+        entry.status = 'error'
+        entry.error = err.message || String(err)
+        resolve({
+          listenPort,
+          destHost,
+          destPort,
+          status: entry.status,
+          error: entry.error,
+        })
+      })
+      server.listen(listenPort, '127.0.0.1', () => {
+        entry.status = 'listening'
+        resolve({
+          listenPort,
+          destHost,
+          destPort,
+          status: 'listening',
+          error: null,
+        })
+      })
+    })
+  }
+
+  async applyForwards(rules) {
+    this.clearForwards()
+    const list = Array.isArray(rules) ? rules : []
+    for (const rule of list) {
+      await this.startForward(rule)
+    }
+    return this.listForwards()
+  }
+
   dispose() {
-    try {
-      if (this.stream) this.stream.close()
-    } catch {}
-    try {
-      if (this.conn) this.conn.end()
-    } catch {}
-    this.stream = null
-    this.sftp = null
-    this.conn = null
-    this.ready = false
+    this._localClose = true
+    this.finish('local')
   }
 }
 

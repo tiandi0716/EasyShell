@@ -17,6 +17,62 @@ function fileTypeLabel(mode, isDir) {
   return '文件'
 }
 
+// 容器/虚拟化网桥地址（docker0 的 172.17.0.1 等），找内网地址时是噪音
+const VIRTUAL_IFACE =
+  /^(docker\d*|br-[0-9a-f]{12}|veth|virbr|cni|flannel|cali|kube-|tunl|lxcbr|lxdbr|podman|vxlan|weave|dummy)/i
+
+function isPrivateIPv4(ip) {
+  const [a, b] = ip.split('.').map(Number)
+  return (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    // CGNAT / Tailscale 等
+    (a === 100 && b >= 64 && b <= 127)
+  )
+}
+
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/
+
+function maskToPrefix(mask) {
+  return mask
+    .split('.')
+    .reduce((n, part) => n + (Number(part) >>> 0).toString(2).replace(/0/g, '').length, 0)
+}
+
+function parseIps(lines) {
+  const list = []
+  const seen = new Set()
+  const add = (iface, address, prefix) => {
+    if (seen.has(address) || address.startsWith('127.') || address.startsWith('169.254.')) return
+    seen.add(address)
+    list.push({ iface, address, prefix })
+  }
+  for (const line of lines) {
+    // ip -o -4 addr: "2: eth0    inet 192.168.1.10/24 brd ... scope global eth0"
+    const ipAddr = line.match(/^\d+:\s+(\S+?)(?:@\S+)?\s+inet\s+(\d{1,3}(?:\.\d{1,3}){3})\/(\d+)/)
+    if (ipAddr) {
+      add(ipAddr[1], ipAddr[2], Number(ipAddr[3]))
+      continue
+    }
+    // ESXi esxcli: "vmk0  192.168.1.166  255.255.255.0  192.168.1.255  STATIC  192.168.1.1 ..."
+    const esx = line.match(/^(vmk\d+)\s+(\d{1,3}(?:\.\d{1,3}){3})\s+(\d{1,3}(?:\.\d{1,3}){3})/)
+    if (esx) {
+      add(esx[1], esx[2], maskToPrefix(esx[3]))
+      continue
+    }
+    // hostname -I：整行只有地址（含 IPv6），没有网卡名；表格类输出会混入掩码/网关，不能按词抓
+    const tokens = line.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length && tokens.every((t) => /^[0-9a-f.:]+$/i.test(t))) {
+      for (const token of tokens) if (IPV4.test(token)) add('', token, 0)
+    }
+  }
+  const real = list.filter((ip) => !VIRTUAL_IFACE.test(ip.iface))
+  return (real.length ? real : list)
+    .map((ip) => ({ ...ip, private: isPrivateIPv4(ip.address) }))
+    .sort((a, b) => Number(b.private) - Number(a.private))
+}
+
 function parseCpuLine(line) {
   const parts = line.trim().split(/\s+/)
   if (parts[0] !== 'cpu') return null
@@ -157,7 +213,11 @@ function parseMonitor(raw, prev) {
   netHistory.push({ t: now, rxRate, txRate })
   while (netHistory.length > 60) netHistory.shift()
 
+  // IP 段由调用方低频附带；本次没带就沿用上次结果
+  const ips = sections.IP ? parseIps(sections.IP) : prev?.ips || []
+
   return {
+    ips,
     uptimeText,
     load,
     cpuPercent,
@@ -177,6 +237,7 @@ function parseMonitor(raw, prev) {
       procTicks,
       net: { rx, tx, at: now },
       netHistory,
+      ips,
     },
   }
 }
@@ -211,4 +272,10 @@ const MONITOR_SCRIPT = [
   'cat /proc/net/dev',
 ].join('; ')
 
-module.exports = { modeToString, fileTypeLabel, parseMonitor, MONITOR_SCRIPT }
+// 网卡 IPv4：Linux 用 ip / hostname -I，ESXi（BusyBox，无 ip）用 esxcli
+const IP_SCRIPT = [
+  "echo '===IP==='",
+  'ip -o -4 addr show scope global 2>/dev/null || hostname -I 2>/dev/null || esxcli network ip interface ipv4 get 2>/dev/null',
+].join('; ')
+
+module.exports = { modeToString, fileTypeLabel, parseMonitor, parseIps, MONITOR_SCRIPT, IP_SCRIPT }

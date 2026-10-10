@@ -22,6 +22,7 @@ const empty: ConnectionConfig = {
 interface Props {
   initial?: ConnectionConfig | null
   folders?: string[]
+  connections?: ConnectionConfig[]
   /** 新建时的默认连接类型 */
   defaultConnType?: 'ssh' | 'rdp'
   onClose: () => void
@@ -31,6 +32,7 @@ interface Props {
 export default function ConnectionForm({
   initial,
   folders = [],
+  connections = [],
   defaultConnType = 'ssh',
   onClose,
   onSave,
@@ -49,6 +51,9 @@ export default function ConnectionForm({
   }, [folders, initial?.folder])
 
   const isRdp = (form.connType || 'ssh') === 'rdp'
+  const jumpOptions = connections.filter(
+    (c) => c.id && c.id !== form.id && (c.connType || 'ssh') === 'ssh',
+  )
 
   useEffect(() => {
     const next = { ...(initial || { ...empty, connType: defaultConnType }) }
@@ -311,6 +316,22 @@ export default function ConnectionForm({
               placeholder="可选"
             />
           </div>
+          {!isRdp ? (
+            <div className="field">
+              <label>跳板机（可选，仅一层）</label>
+              <select
+                value={form.jumpConnectionId || ''}
+                onChange={(e) => setForm({ ...form, jumpConnectionId: e.target.value || undefined })}
+              >
+                <option value="">不使用跳板机</option>
+                {jumpOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name || c.host}（{c.username}@{c.host}）
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           {isRdp ? (
             <div className="dialog-message">
               Windows 远程桌面将在应用内标签中打开，使用已保存的账号密码自动登录。

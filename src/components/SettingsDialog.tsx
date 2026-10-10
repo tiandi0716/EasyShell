@@ -6,22 +6,28 @@ import {
   applyUiFontSize,
   normalizeUiFontSize,
 } from '../utils/uiFontSize'
+import { readTerminalPrefs, writeTerminalPrefs } from '../utils/terminalPrefs'
+import { isMac } from '../utils/platform'
 
 interface Props {
   onClose: () => void
 }
 
-type SettingsTab = 'appearance' | 'network'
+type SettingsTab = 'appearance' | 'terminal' | 'network'
 
 const TABS: Array<{ id: SettingsTab; label: string; desc: string }> = [
   { id: 'appearance', label: '外观', desc: '字体与显示' },
+  { id: 'terminal', label: '终端', desc: '复制粘贴与重连' },
   { id: 'network', label: '网络', desc: '代理与连接' },
 ]
+
+const FIND_SHORTCUT = isMac ? '⌘F' : 'Ctrl+Shift+F'
 
 export default function SettingsDialog({ onClose }: Props) {
   const [tab, setTab] = useState<SettingsTab>('appearance')
   const [fontSize, setFontSize] = useState(UI_FONT_SIZE_DEFAULT)
   const [savedFontSize, setSavedFontSize] = useState(UI_FONT_SIZE_DEFAULT)
+  const [termPrefs, setTermPrefs] = useState(readTerminalPrefs)
   const [useSystemProxy, setUseSystemProxy] = useState(true)
   const [detectedProxy, setDetectedProxy] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -66,6 +72,7 @@ export default function SettingsDialog({ onClose }: Props) {
         uiFontSize: size,
         useSystemProxy,
       })
+      writeTerminalPrefs(termPrefs)
       setSavedFontSize(size)
       onClose()
     } catch (err) {
@@ -148,6 +155,50 @@ export default function SettingsDialog({ onClose }: Props) {
                         : `默认 ${UI_FONT_SIZE_DEFAULT}px`}
                     </span>
                   </div>
+                </div>
+              </section>
+            ) : tab === 'terminal' ? (
+              <section className="settings-panel">
+                <header className="settings-panel-head">
+                  <h4>终端</h4>
+                  <p>{`SSH 终端里的鼠标与连接行为；在终端里按 ${FIND_SHORTCUT} 可搜索输出。`}</p>
+                </header>
+
+                <div className="settings-field">
+                  <label className="settings-check">
+                    <input
+                      type="checkbox"
+                      checked={termPrefs.copyOnSelect}
+                      onChange={(e) => setTermPrefs((p) => ({ ...p, copyOnSelect: e.target.checked }))}
+                    />
+                    <span>选中文字自动复制</span>
+                  </label>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-check">
+                    <input
+                      type="checkbox"
+                      checked={termPrefs.rightClickPaste}
+                      onChange={(e) => setTermPrefs((p) => ({ ...p, rightClickPaste: e.target.checked }))}
+                    />
+                    <span>右键粘贴</span>
+                  </label>
+                  <p className="settings-hint">
+                    关闭「选中自动复制」时，有选区右键为复制；vim 等开启鼠标模式时右键交给远端程序。
+                  </p>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-check">
+                    <input
+                      type="checkbox"
+                      checked={termPrefs.autoReconnect}
+                      onChange={(e) => setTermPrefs((p) => ({ ...p, autoReconnect: e.target.checked }))}
+                    />
+                    <span>网络断开后自动重连</span>
+                  </label>
+                  <p className="settings-hint">最多重试 5 次；输入 exit 主动退出不会重连。</p>
                 </div>
               </section>
             ) : (

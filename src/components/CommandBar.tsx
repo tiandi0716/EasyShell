@@ -1,8 +1,17 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { isPwdCommand } from '../utils/pwdSync'
+import PromptDialog from './PromptDialog'
 
 const HISTORY_KEY = 'easyshell.cmdHistory'
+const SNIPPETS_KEY = 'easyshell.snippets'
 const MAX_HISTORY = 200
+const MAX_SNIPPETS = 80
+
+interface Snippet {
+  id: string
+  name: string
+  command: string
+}
 
 function loadHistory(): string[] {
   try {
@@ -16,6 +25,26 @@ function loadHistory(): string[] {
 
 function saveHistory(list: string[]) {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(-MAX_HISTORY)))
+}
+
+function loadSnippets(): Snippet[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SNIPPETS_KEY) || '[]')
+    if (!Array.isArray(raw)) return []
+    return raw
+      .filter((x) => x && typeof x.command === 'string')
+      .map((x) => ({
+        id: String(x.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`),
+        name: String(x.name || x.command).slice(0, 40),
+        command: String(x.command),
+      }))
+  } catch {
+    return []
+  }
+}
+
+function saveSnippets(list: Snippet[]) {
+  localStorage.setItem(SNIPPETS_KEY, JSON.stringify(list.slice(0, MAX_SNIPPETS)))
 }
 
 interface Props {
@@ -35,6 +64,9 @@ export default function CommandBar({
   const [sendMode, setSendMode] = useState<'current' | 'all'>('current')
   const [history, setHistory] = useState<string[]>(() => loadHistory())
   const [showPicker, setShowPicker] = useState(false)
+  const [showSnippets, setShowSnippets] = useState(false)
+  const [starOpen, setStarOpen] = useState(false)
+  const [snippets, setSnippets] = useState<Snippet[]>(() => loadSnippets())
   const [pickerIndex, setPickerIndex] = useState(0)
   const histIndex = useRef(-1)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -49,7 +81,10 @@ export default function CommandBar({
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setShowPicker(false)
+      if (!wrapRef.current?.contains(e.target as Node)) {
+        setShowPicker(false)
+        setShowSnippets(false)
+      }
     }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
@@ -71,23 +106,51 @@ export default function CommandBar({
     }
   }
 
-  function doSend(mode: 'current' | 'all' = sendMode) {
-    const text = cmd.trimEnd()
-    const targets =
-      mode === 'all'
-        ? readySessionIds
-        : activeSessionId
-          ? [activeSessionId]
-          : []
-    if (!targets.length) return
+  function targetsOf(mode: 'current' | 'all' = sendMode) {
+    return mode === 'all' ? readySessionIds : activeSessionId ? [activeSessionId] : []
+  }
+
+  function sendText(text: string, mode: 'current' | 'all' = sendMode) {
+    const targets = targetsOf(mode)
+    if (!targets.length) return false
     if (isPwdCommand(text)) onPwdCommand?.(targets)
     sendTo(targets, text)
-    if (text) {
-      pushHistory(text)
-      setCmd('')
-    }
+    if (text) pushHistory(text)
     histIndex.current = -1
     setShowPicker(false)
+    return true
+  }
+
+  function doSend(mode: 'current' | 'all' = sendMode) {
+    const text = cmd.trimEnd()
+    if (!sendText(text, mode)) return
+    if (text) setCmd('')
+    setShowSnippets(false)
+  }
+
+  function addSnippet(name: string) {
+    const command = cmd.trim()
+    if (!command) return
+    const next: Snippet = {
+      id: `s-${Date.now().toString(16)}`,
+      name: name.trim() || command.slice(0, 40),
+      command,
+    }
+    setSnippets((prev) => {
+      const list = [next, ...prev.filter((s) => s.command !== command)].slice(0, MAX_SNIPPETS)
+      saveSnippets(list)
+      return list
+    })
+    setStarOpen(false)
+    setShowSnippets(true)
+  }
+
+  function removeSnippet(id: string) {
+    setSnippets((prev) => {
+      const list = prev.filter((s) => s.id !== id)
+      saveSnippets(list)
+      return list
+    })
   }
 
   function submit(e: FormEvent) {
@@ -117,6 +180,67 @@ export default function CommandBar({
 
   return (
     <div className="cmd-bar-wrap" ref={wrapRef}>
+      {showSnippets ? (
+        <div className="cmd-snippet-popup">
+          {snippets.length === 0 ? (
+            <div className="cmd-snippet-empty">还没有快捷命令。输入命令后点「收藏」即可。</div>
+          ) : (
+            snippets.map((item) => (
+              <div key={item.id} className="cmd-snippet-row">
+                <button
+                  type="button"
+                  className="cmd-snippet-main"
+                  title={item.command}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    setCmd(item.command)
+                    setShowSnippets(false)
+                    histIndex.current = -1
+                    inputRef.current?.focus()
+                  }}
+                >
+                  <strong>{item.name}</strong>
+                  <span>{item.command}</span>
+                </button>
+                <button
+                  type="button"
+                  className="cmd-snippet-send"
+                  disabled={disabled || !readySessionIds.length}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    sendText(item.command)
+                    setShowSnippets(false)
+                  }}
+                >
+                  发送
+                </button>
+                <button
+                  type="button"
+                  className="cmd-snippet-del"
+                  title="删除"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    removeSnippet(item.id)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))
+          )}
+          <div className="cmd-snippet-foot">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={!cmd.trim()}
+              onClick={() => setStarOpen(true)}
+            >
+              收藏当前命令
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {showPicker && filtered.length > 0 ? (
         <div className="cmd-history-popup">
           {filtered.slice(0, 40).map((item, idx) => (
@@ -215,6 +339,18 @@ export default function CommandBar({
         />
         <button
           type="button"
+          className="btn btn-ghost btn-sm"
+          disabled={disabled}
+          title="快捷命令"
+          onClick={() => {
+            setShowPicker(false)
+            setShowSnippets((v) => !v)
+          }}
+        >
+          快捷
+        </button>
+        <button
+          type="button"
           className="btn btn-primary btn-sm"
           disabled={disabled || !readySessionIds.length}
           onClick={() => doSend(sendMode)}
@@ -227,6 +363,18 @@ export default function CommandBar({
           发送
         </button>
       </form>
+
+      {starOpen ? (
+        <PromptDialog
+          title="收藏快捷命令"
+          label="名称"
+          defaultValue={cmd.trim().slice(0, 40)}
+          placeholder="例如：看磁盘"
+          confirmText="收藏"
+          onConfirm={addSnippet}
+          onClose={() => setStarOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }

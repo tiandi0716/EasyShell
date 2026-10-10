@@ -26,6 +26,7 @@ const {
 const { openRdpConnection } = require('./rdp.cjs')
 const { RdpManager } = require('./rdp-manager.cjs')
 const { createTransferHub } = require('./transfer-hub.cjs')
+const sftpEdit = require('./sftp-edit.cjs')
 const {
   listKeys,
   importKeyFromFile,
@@ -270,11 +271,13 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  sftpEdit.cleanupAll()
   ssh.closeAll()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
+  sftpEdit.cleanupAll()
   ssh.closeAll()
 })
 
@@ -477,6 +480,8 @@ ipcMain.handle('clipboard:write', (_e, text) => {
   return true
 })
 
+ipcMain.handle('clipboard:read', () => clipboard.readText())
+
 ipcMain.handle('connections:importFinalShell', (_e, customDir) => {
   const dir = customDir || defaultExportDir()
   const existing = readConnections()
@@ -655,11 +660,23 @@ ipcMain.handle('keys:rename', (_e, { id, name }) => renameKey(id, name))
 
 ipcMain.handle('keys:delete', (_e, id) => deleteKey(id))
 
+function resolveJumpConfig(config) {
+  const jumpId = config?.jumpConnectionId
+  if (!jumpId) return config
+  if (jumpId === config.id) throw new Error('不能把自身设为跳板机')
+  const jump = readConnections().find((c) => c.id === jumpId)
+  if (!jump) throw new Error('找不到跳板机配置')
+  if ((jump.connType || 'ssh') === 'rdp') throw new Error('跳板机必须是 SSH 连接')
+  const { jumpConnectionId: _nested, jump: _jump, ...jumpClean } = jump
+  return { ...config, jump: jumpClean }
+}
+
 ipcMain.handle('ssh:open', async (_e, { sessionId, config }) => {
   const id = sessionId || randomUUID()
   try {
+    const resolved = resolveJumpConfig(config)
     // 先挂监听再 connect，避免握手阶段的提示符被 safeEmit 丢掉
-    const session = ssh.create(id, config)
+    const session = ssh.create(id, resolved)
     session.on('data', (payload) => {
       const data = typeof payload === 'string' ? payload : payload?.data
       const offset = typeof payload === 'object' && payload ? payload.offset : undefined
@@ -668,9 +685,10 @@ ipcMain.handle('ssh:open', async (_e, { sessionId, config }) => {
         mainWindow.webContents.send('ssh:data', { sessionId: id, data, offset })
       }
     })
-    session.on('close', () => {
+    session.on('close', (reason) => {
+      sftpEdit.cleanupSession(id)
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('ssh:closed', { sessionId: id })
+        mainWindow.webContents.send('ssh:closed', { sessionId: id, reason: reason || 'lost' })
       }
       ssh.close(id)
     })
@@ -685,6 +703,7 @@ ipcMain.handle('ssh:open', async (_e, { sessionId, config }) => {
     await session.connect()
     return { sessionId: id }
   } catch (err) {
+    sftpEdit.cleanupSession(id)
     ssh.close(id)
     throw new Error(err.message || String(err))
   }
@@ -852,6 +871,30 @@ ipcMain.handle('sftp:mkdir', async (_e, { sessionId, remotePath }) => {
   if (!session) throw new Error('会话不存在')
   await session.mkdir(remotePath)
   return true
+})
+
+ipcMain.handle('sftp:edit', async (_e, { sessionId, remotePath }) => {
+  const session = ssh.get(sessionId)
+  if (!session) throw new Error('会话不存在')
+  return sftpEdit.openForEdit({
+    session,
+    sessionId,
+    remotePath,
+    bindFileTransfer,
+    getWindow: () => mainWindow,
+  })
+})
+
+ipcMain.handle('ssh:listForwards', (_e, sessionId) => {
+  const session = ssh.get(sessionId)
+  if (!session) return []
+  return session.listForwards()
+})
+
+ipcMain.handle('ssh:setForwards', async (_e, { sessionId, forwards }) => {
+  const session = ssh.get(sessionId)
+  if (!session) throw new Error('会话不存在')
+  return session.setForwards(forwards)
 })
 
 ipcMain.handle('sftp:rename', async (_e, { sessionId, fromPath, toPath }) => {

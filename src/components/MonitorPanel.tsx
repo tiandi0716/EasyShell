@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ConnectionConfig, MonitorData, RdpMonitorData } from '../vite-env'
 import { formatBytes, formatRate, pct } from '../utils/format'
-import { buildConnectCommand } from '../utils/sshCommand'
+import { buildConnectInfo } from '../utils/sshCommand'
 
 interface Props {
   /** SSH 会话 id；与 rdpSessionId 互斥 */
@@ -254,7 +254,8 @@ function HostInfo({
 }) {
   const port = Number(connection.port) || 22
   const address = port === 22 ? connection.host : `${connection.host}:${port}`
-  const command = buildConnectCommand(connection)
+  const info = buildConnectInfo(connection)
+  const isRdp = (connection.connType || 'ssh') === 'rdp'
   const shown = ips.slice(0, 6)
 
   return (
@@ -273,8 +274,13 @@ function HostInfo({
         >
           复制
         </button>
-        <button type="button" className="host-copy" title={command} onClick={() => onCopy(command)}>
-          SSH 命令
+        <button
+          type="button"
+          className="host-copy"
+          title={isRdp ? '复制 RDP 信息' : '复制 SSH 信息'}
+          onClick={() => onCopy(info)}
+        >
+          {isRdp ? 'RDP 信息' : 'SSH 信息'}
         </button>
       </div>
       {shown.map((ip, i) => {

@@ -24,7 +24,7 @@ import SettingsDialog from './components/SettingsDialog'
 import TerminalView from './components/TerminalView'
 import TransferMenu from './components/TransferMenu'
 import { extractPwdPath } from './utils/pwdSync'
-import { buildConnectCommand } from './utils/sshCommand'
+import { buildConnectInfo } from './utils/sshCommand'
 import { readTerminalPrefs } from './utils/terminalPrefs'
 import { applyUiFontSize } from './utils/uiFontSize'
 import {
@@ -619,9 +619,16 @@ export default function App() {
     await loadConnections()
   }
 
-  async function copyToClipboard(text: string) {
+  async function copyToClipboard(text: string, toast?: string) {
     await window.easyshell.writeClipboard(text)
-    setCopyToast(`已复制：${text}`)
+    const hint =
+      toast ||
+      (text.startsWith('IP:') && text.includes('\n')
+        ? text.includes('RDP端口')
+          ? '已复制 RDP 信息'
+          : '已复制 SSH 信息'
+        : `已复制：${text}`)
+    setCopyToast(hint)
     window.clearTimeout(copyToastTimerRef.current)
     copyToastTimerRef.current = window.setTimeout(() => setCopyToast(null), 1800)
   }
@@ -631,7 +638,8 @@ export default function App() {
   }
 
   async function handleCopySshCommand(conn: ConnectionConfig) {
-    await copyToClipboard(buildConnectCommand(conn))
+    const isRdp = (conn.connType || 'ssh') === 'rdp'
+    await copyToClipboard(buildConnectInfo(conn), isRdp ? '已复制 RDP 信息' : '已复制 SSH 信息')
   }
 
   async function handleExportBackup(options?: { folders?: string[] }) {
@@ -1461,7 +1469,7 @@ export default function App() {
             },
             {
               key: 'copyCmd',
-              label: tabMenu.tab.kind === 'rdp' ? '复制 RDP 地址' : '复制 SSH 命令',
+              label: tabMenu.tab.kind === 'rdp' ? '复制 RDP 信息' : '复制 SSH 信息',
               disabled: !tabMenu.tab.connectionId,
             },
             {

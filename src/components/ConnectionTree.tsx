@@ -143,7 +143,7 @@ export default function ConnectionTree({
       { key: 'copyAddr', label: '复制地址' },
       {
         key: 'copyCmd',
-        label: isRdp ? '复制 RDP 地址' : '复制 SSH 命令',
+        label: isRdp ? '复制 RDP 信息' : '复制 SSH 信息',
       },
       { key: 'duplicate', label: '克隆' },
       { key: 'move', label: '移动到目录…' },

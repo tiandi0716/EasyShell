@@ -4,6 +4,24 @@ function shellQuote(value: string) {
   return /^[\w@%+=:,./~-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+function authLine(conn: ConnectionConfig): string {
+  if (conn.password) return `密码：${conn.password}`
+  if (conn.authType === 'key') return '认证：私钥'
+  return '密码：（未保存）'
+}
+
+/** 可直接粘贴给同事的主机信息 */
+export function buildConnectInfo(conn: ConnectionConfig): string {
+  const isRdp = (conn.connType || 'ssh') === 'rdp'
+  const port = Number(conn.port) || (isRdp ? 3389 : 22)
+  return [
+    `IP: ${conn.host}`,
+    `${isRdp ? 'RDP端口' : 'SSH端口'}: ${port}`,
+    `用户名：${conn.username || ''}`,
+    authLine(conn),
+  ].join('\n')
+}
+
 /** 可直接粘到本机终端的连接命令；RDP 返回 host[:port] */
 export function buildConnectCommand(conn: ConnectionConfig): string {
   if ((conn.connType || 'ssh') === 'rdp') {

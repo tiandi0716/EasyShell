@@ -59,6 +59,7 @@ export default function TerminalView({
     let onDataDispose: { dispose: () => void } | undefined
     let oscSilenceDispose: { dispose: () => void } | undefined
     let resizeObserver: ResizeObserver | undefined
+    let onWinResize: (() => void) | undefined
     let removeMouseListeners: (() => void) | undefined
 
     const fontFamily = 'Menlo, Monaco, "IBM Plex Mono", Consolas, "Courier New", monospace'
@@ -216,13 +217,20 @@ export default function TerminalView({
         }
       })
 
-      resizeObserver = new ResizeObserver(() => {
+      const fitNow = () => {
+        if (disposed) return
         const el = hostRef.current
         if (!el || el.clientWidth < 20 || el.clientHeight < 20) return
         fit.fit()
         pushResize(term.cols, term.rows)
-      })
+      }
+      resizeObserver = new ResizeObserver(fitNow)
       resizeObserver.observe(host)
+      // mac 最大化/全屏有时晚于布局一拍，补几次 fit 避免行列仍是小窗口的
+      onWinResize = fitNow
+      window.addEventListener('resize', onWinResize)
+      window.setTimeout(fitNow, 50)
+      window.setTimeout(fitNow, 200)
       pushResize(term.cols, term.rows)
     }
 
@@ -234,6 +242,7 @@ export default function TerminalView({
       onDataDispose?.dispose()
       oscSilenceDispose?.dispose()
       resizeObserver?.disconnect()
+      if (onWinResize) window.removeEventListener('resize', onWinResize)
       removeMouseListeners?.()
       termRef.current?.dispose()
       termRef.current = null

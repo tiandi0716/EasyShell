@@ -112,6 +112,7 @@ export default function App() {
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   )
   const dragTabIdRef = useRef<string | null>(null)
+  const tabElRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null)
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null)
   const resizingRdpRef = useRef<Set<string>>(new Set())
@@ -247,6 +248,12 @@ export default function App() {
   useEffect(() => {
     if (activeTabId) sessionStorage.setItem('easyshell.activeTabId', activeTabId)
   }, [activeTabId])
+
+  useEffect(() => {
+    if (!activeTabId) return
+    const el = tabElRefs.current.get(activeTabId)
+    el?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeTabId, tabs.length])
 
   useEffect(() => {
     const offClose = window.easyshell.onRdpClose(({ sessionId }) => {
@@ -1034,11 +1041,16 @@ export default function App() {
           {tabs.length === 0 ? (
             <span className="tab-placeholder">未连接</span>
           ) : (
-            tabs.map((tab, index) => (
+            <div className="tabbar-tabs">
+            {tabs.map((tab, index) => (
               <button
                 key={tab.id}
                 type="button"
                 draggable
+                ref={(node) => {
+                  if (node) tabElRefs.current.set(tab.id, node)
+                  else tabElRefs.current.delete(tab.id)
+                }}
                 className={`tab ${tab.id === activeTabId ? 'active' : ''} ${
                   draggingTabId === tab.id ? 'dragging' : ''
                 } ${dragOverTabId === tab.id && draggingTabId !== tab.id ? 'drag-over' : ''}`}
@@ -1109,7 +1121,8 @@ export default function App() {
                   ×
                 </span>
               </button>
-            ))
+            ))}
+            </div>
           )}
           <div className="tabbar-spacer" />
           <TransferMenu />

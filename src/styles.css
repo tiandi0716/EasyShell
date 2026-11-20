@@ -1507,6 +1507,27 @@ body.platform-darwin .tab-placeholder {
   color: var(--text);
 }
 
+.transfer-popover-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.transfer-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+
+.transfer-close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .transfer-dir-line {
   padding: 6px 10px;
   font-size: 11px;

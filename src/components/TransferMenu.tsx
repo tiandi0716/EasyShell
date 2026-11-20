@@ -31,6 +31,22 @@ export default function TransferMenu() {
   const [pos, setPos] = useState({ top: 0, right: 0 })
   const btnRef = useRef<HTMLButtonElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
+  /** 用户关掉后，同一批传输不再自动弹出 */
+  const dismissedRef = useRef(false)
+  const idleTimerRef = useRef<number | undefined>(undefined)
+
+  function closePanel() {
+    dismissedRef.current = true
+    setOpen(false)
+  }
+
+  function togglePanel() {
+    setOpen((v) => {
+      const next = !v
+      dismissedRef.current = !next
+      return next
+    })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -42,8 +58,9 @@ export default function TransferMenu() {
       setItems((prev) => {
         const idx = prev.findIndex((x) => x.id === item.id)
         if (idx === -1) {
-          // 仅新任务自动打开面板
-          if (item.status === 'active') setOpen(true)
+          if (item.status === 'active' && !dismissedRef.current) {
+            queueMicrotask(() => setOpen(true))
+          }
           return [item, ...prev]
         }
         const next = prev.slice()
@@ -80,17 +97,19 @@ export default function TransferMenu() {
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node
       if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return
-      setOpen(false)
+      closePanel()
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') closePanel()
     }
+    const onResize = () => closePanel()
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
-    window.addEventListener('resize', () => setOpen(false))
+    window.addEventListener('resize', onResize)
     return () => {
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
     }
   }, [open])
 
@@ -104,6 +123,17 @@ export default function TransferMenu() {
   const lastDownloadDir =
     downloads.find((x) => x.localPath)?.localPath?.replace(/[/\\][^/\\]+$/, '') || ''
 
+  useEffect(() => {
+    if (activeCount > 0) {
+      window.clearTimeout(idleTimerRef.current)
+      return
+    }
+    idleTimerRef.current = window.setTimeout(() => {
+      dismissedRef.current = false
+    }, 2000)
+    return () => window.clearTimeout(idleTimerRef.current)
+  }, [activeCount])
+
   const popover = open
     ? createPortal(
         <div
@@ -115,14 +145,25 @@ export default function TransferMenu() {
         >
           <div className="transfer-popover-head">
             <strong>传输任务</strong>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => void window.easyshell.clearFinishedTransfers()}
-              disabled={!sorted.some((x) => x.status !== 'active')}
-            >
-              清除完成
-            </button>
+            <div className="transfer-popover-actions">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => void window.easyshell.clearFinishedTransfers()}
+                disabled={!sorted.some((x) => x.status !== 'active')}
+              >
+                清除完成
+              </button>
+              <button
+                type="button"
+                className="transfer-close"
+                title="收起"
+                aria-label="收起传输任务"
+                onClick={closePanel}
+              >
+                ×
+              </button>
+            </div>
           </div>
 
           {lastDownloadDir ? (
@@ -194,7 +235,7 @@ export default function TransferMenu() {
         title="传输任务"
         aria-label="传输任务"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={togglePanel}
       >
         <TransferIcon />
         {activeCount > 0 ? (
